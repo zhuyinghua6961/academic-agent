@@ -1,0 +1,63 @@
+# Secrets
+.env
+.env.*
+!.env.example
+.academic-agent/.env
+!.academic-agent/.env.example
+
+# Academic Agent local workspace
+.academic-agent/*
+!.academic-agent/
+!.academic-agent/config.toml
+!.academic-agent/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Runtime logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local assistant/tool state
+.agents/
+.codex/
+.claude/
+
+# Fallback git metadata directory used when .git is mounted read-only.
+.repo.git/

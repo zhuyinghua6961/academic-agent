@@ -1,0 +1,55 @@
+# Academic Agent project config
+# Secrets must stay in environment variables, not in this file.
+
+[runtime]
+core_host = "127.0.0.1"
+core_port = 8765
+
+[context.compaction]
+enabled = true
+# 1M context window. Keep max_history_tokens below the full window so tools,
+# system prompt, retrieval results, and output still have room.
+context_window_tokens = 1000000
+compact_trigger_ratio = 0.85
+max_history_tokens = 200000
+response_token_reserve = 30000
+system_tool_token_reserve = 20000
+chars_per_token = 4.0
+min_recent_messages = 8
+max_recent_messages = 80
+recent_token_ratio = 0.55
+important_message_limit = 24
+important_token_ratio = 0.25
+summary_token_ratio = 0.35
+per_message_token_limit = 2000
+
+[providers.planner]
+provider = "deepseek"
+model = "deepseek-v4-pro"
+api_key_env = "DEEPSEEK_API_KEY"
+max_output_tokens = 30000
+temperature = 0.2
+reasoning_effort = "max"
+reasoning_summary = "auto"
+
+[search]
+paper_sources = ["arxiv", "openalex"]
+web_sources = ["brave", "tavily", "serper", "serpapi", "duckduckgo"]
+timeout_seconds = 30
+trust_env = true
+
+[search.brave]
+api_key_env = "BRAVE_SEARCH_API_KEY"
+base_url = "https://api.search.brave.com/res/v1/web/search"
+
+[search.tavily]
+api_key_env = "TAVILY_API_KEY"
+base_url = "https://api.tavily.com/search"
+
+[search.serper]
+api_key_env = "SERPER_API_KEY"
+base_url = "https://google.serper.dev/search"
+
+[search.serpapi]
+api_key_env = "SERPAPI_API_KEY"
+base_url = "https://serpapi.com/search.json"
