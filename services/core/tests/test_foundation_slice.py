@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,7 @@ from academic_agent_core.api import create_app
 from academic_agent_core.config import AgentConfig
 from academic_agent_core.graph import (
     IdeaPlanRunner,
+    _build_artifact_context,
     _build_history_context,
     _tool_observation_message,
     build_context_usage,
@@ -21,6 +23,10 @@ from academic_agent_core.providers import _chat_tool_calls, _openai_response_too
 from academic_agent_core.providers import anthropic_agent_body, create_idea_diagnosis_provider
 from academic_agent_core.providers import openai_responses_agent_body, openai_responses_body
 from academic_agent_core.providers import _payload_from_sse, _remove_parameter, _unsupported_parameter
+from academic_agent_core.providers import (
+    _iterate_chat_completions_stream,
+    _iterate_openai_responses_stream,
+)
 from academic_agent_core.search import (
     SearchEngine,
     _arxiv_api_sort_by,
@@ -34,10 +40,19 @@ from academic_agent_core.search import (
     parse_serper_results,
     parse_tavily_results,
 )
-from academic_agent_core.schemas import ProviderProfileConfig, ThreadMessage
+from academic_agent_core.schemas import MemoryRecord, ProviderProfileConfig, ProviderRequest, ThreadMessage
 from academic_agent_core.schemas import SearchResponse, SearchResult, utc_now
 from academic_agent_core.tools import PaperSearchTool, get_default_tools
 from academic_agent_core.workspace import ProjectWorkspace
+
+
+class FakeSSEStreamResponse:
+    def __init__(self, lines: list[str], headers: dict[str, str] | None = None) -> None:
+        self._lines = lines
+        self.headers = headers or {}
+
+    def iter_lines(self):
+        yield from self._lines
 
 
 def test_workspace_init_creates_required_dirs_and_database(tmp_path: Path) -> None:
@@ -403,6 +418,104 @@ def test_payload_from_sse_returns_completed_response_payload() -> None:
     }
 
 
+def test_openai_responses_stream_parser_emits_content_and_final_response() -> None:
+    request = ProviderRequest(
+        request_id="provider_req_1",
+        provider="openai",
+        model="gpt-test",
+        profile="planner",
+        messages=[],
+        prompt_version="test",
+        input_hash="hash",
+        created_at=utc_now(),
+    )
+    response = FakeSSEStreamResponse(
+        [
+            'data: {"type":"response.output_text.delta","delta":"{\\"problem\\":"}\n',
+            'data: {"type":"response.output_text.delta","delta":"\\"x\\"}"}\n',
+            (
+                'data: {"type":"response.completed","response":{"id":"resp_1",'
+                '"status":"completed","output":[{"type":"message","content":[{"type":"output_text",'
+                '"text":"{\\"problem\\":\\"x\\"}"}]}],"usage":{"input_tokens":10,"output_tokens":3}}}\n'
+            ),
+            "data: [DONE]\n",
+        ],
+        headers={"x-request-id": "req_test"},
+    )
+
+    chunks = list(
+        _iterate_openai_responses_stream(
+            response,  # type: ignore[arg-type]
+            request=request,
+            provider="openai",
+            model="gpt-test",
+        )
+    )
+
+    assert [chunk["type"] for chunk in chunks] == [
+        "content_delta",
+        "content_delta",
+        "completed",
+    ]
+    assert chunks[-1]["response"].output["content"] == '{"problem":"x"}'
+    assert chunks[-1]["response"].provider_request_id == "req_test"
+
+
+def test_chat_completions_stream_parser_reconstructs_tool_calls() -> None:
+    request = ProviderRequest(
+        request_id="provider_req_2",
+        provider="deepseek",
+        model="deepseek-chat",
+        profile="planner",
+        messages=[],
+        prompt_version="test",
+        input_hash="hash",
+        created_at=utc_now(),
+    )
+    response = FakeSSEStreamResponse(
+        [
+            'data: {"id":"chat_1","choices":[{"delta":{"content":"hello "}}]}\n',
+            'data: {"id":"chat_1","choices":[{"delta":{"content":"world"}}]}\n',
+            (
+                'data: {"id":"chat_1","choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"id":"call_1","function":{"name":"paper_search","arguments":"{\\"query\\":"}}]}}]}\n'
+            ),
+            (
+                'data: {"id":"chat_1","choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"arguments":"\\"agent planning\\"}"}}]}}]}\n'
+            ),
+            (
+                'data: {"id":"chat_1","choices":[{"finish_reason":"tool_calls","delta":{}}],'
+                '"usage":{"prompt_tokens":12,"completion_tokens":4,"prompt_cache_hit_tokens":3}}\n'
+            ),
+            "data: [DONE]\n",
+        ],
+        headers={"x-request-id": "req_chat"},
+    )
+
+    chunks = list(
+        _iterate_chat_completions_stream(
+            response,  # type: ignore[arg-type]
+            request=request,
+            provider="deepseek",
+            model="deepseek-chat",
+        )
+    )
+
+    assert "".join(str(chunk.get("delta", "")) for chunk in chunks) == "hello world"
+    final = chunks[-1]["response"]
+    assert final.output["content"] == "hello world"
+    assert final.output["finish_reason"] == "tool_calls"
+    assert final.output["tool_calls"] == [
+        {
+            "call_id": "call_1",
+            "name": "paper_search",
+            "arguments": {"query": "agent planning"},
+        }
+    ]
+    assert final.usage["cache_read_tokens"] == 3
+
+
 def test_arxiv_query_builder_and_feed_parser() -> None:
     feed = """<?xml version="1.0" encoding="UTF-8"?>
     <feed xmlns="http://www.w3.org/2005/Atom"
@@ -554,6 +667,63 @@ def test_paper_search_tool_uses_search_engine_contract() -> None:
     assert result["results"][0]["metadata"]["sort_by"] == "submitted_date"
 
 
+def test_idea_plan_tool_node_writes_paper_search_evidence_artifact(tmp_path: Path) -> None:
+    class FakeSearchEngine:
+        def paper_search(
+            self,
+            query: str,
+            max_results: int = 8,
+            sources: list[str] | None = None,
+            sort_by: str = "hybrid",
+        ) -> SearchResponse:
+            return SearchResponse(
+                query=query,
+                source="paper_search",
+                retrieved_at=utc_now(),
+                results=[
+                    SearchResult(
+                        source="arxiv",
+                        title="Tool Evidence Paper",
+                        snippet="Evidence created by the tool node.",
+                        url="https://arxiv.org/abs/2401.00002",
+                        retrieved_at=utc_now(),
+                    )
+                ],
+            )
+
+    workspace = ProjectWorkspace(tmp_path)
+    runner = IdeaPlanRunner(workspace)
+    runner.tool_registry = get_default_tools(FakeSearchEngine())  # type: ignore[arg-type]
+    run = runner.create_run("Need a paper search artifact")
+
+    runner._tools_node(  # type: ignore[attr-defined]
+        {
+            "run_id": run.run_id,
+            "thread_id": run.thread_id,
+            "tool_calls": [
+                {
+                    "call_id": "call_1",
+                    "name": "paper_search",
+                    "arguments": {"query": "academic agent planning", "max_results": 2},
+                }
+            ],
+            "messages": [],
+        }
+    )
+
+    events = workspace.list_events(run.run_id)
+    evidence_event = [
+        event for event in events if event.event_type == "paper_search.evidence.created"
+    ][0]
+    artifact_id = evidence_event.payload["artifact_id"]
+    metadata, content = ArtifactManager(workspace).read_artifact_content(str(artifact_id))
+
+    assert metadata.artifact_type == "PaperSearchEvidence"
+    assert metadata.status == "frozen"
+    assert "Tool Evidence Paper" in content
+    assert "academic agent planning" in content
+
+
 def test_default_tool_registry_exposes_paper_search_before_web_search() -> None:
     definitions = get_default_tools().get_all_definitions()
     names = [item["function"]["name"] for item in definitions]
@@ -668,6 +838,7 @@ def test_idea_plan_stub_writes_run_events_artifact_and_trace(tmp_path: Path) -> 
     assert "thread.title.generated" in event_types
     assert "trace.recorded" in event_types
     assert "artifact.created" in event_types
+    assert "memory.map.updated" in event_types
     assert "run.completed" in event_types
     provider_event = [event for event in events if event.event_type == "provider.requested"][0]
     assert provider_event.payload["provider"] == "mock"
@@ -713,6 +884,13 @@ def test_idea_plan_stub_writes_run_events_artifact_and_trace(tmp_path: Path) -> 
         "AI co-reading agent for top-conference idea planning"
     )
     assert "agent_iterations" in payload["payload"]
+
+    memory_map = MemoryManager(workspace).read_project_memory_map()
+    assert memory_map.record_count >= 1
+    assert any(record.record_type == "current_plan" for record in memory_map.records)
+    memory_markdown = MemoryManager(workspace).read_project_memory_markdown()
+    assert "## Current Research State" in memory_markdown
+    assert result.artifact.artifact_id in memory_markdown
 
 
 def test_chinese_user_input_gets_chinese_assistant_summary(tmp_path: Path) -> None:
@@ -780,6 +958,127 @@ def test_history_context_compacts_older_messages_and_keeps_recent_exact(tmp_path
     assert packet["source_refs"][0] == "msg:1"
     assert packet["source_refs"][-1] == "msg:16"
     assert packet["persistent_summary_id"] is None
+
+
+def test_artifact_first_context_injects_plan_review_and_paper_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace = ProjectWorkspace(tmp_path)
+    result = IdeaPlanRunner(workspace).run("无人机重复窗户实例定位")
+    artifact_manager = ArtifactManager(workspace)
+    workspace.record_idea_review(
+        result.run.thread_id,
+        result.artifact.artifact_id,
+        result.run.run_id,
+        "Revise",
+        "需要补强近邻文献和可区分机制。",
+    )
+    artifact_manager.write_paper_search_evidence(
+        result.run.run_id,
+        SearchResponse(
+            query="drone facade window localization repeated windows",
+            source="paper_search",
+            retrieved_at=utc_now(),
+            results=[
+                SearchResult(
+                    source="arxiv",
+                    title="Geometry-Aware Facade Element Localization",
+                    snippet="A relevant paper about facade structure.",
+                    url="https://arxiv.org/abs/2601.00001",
+                    retrieved_at=utc_now(),
+                    authors=["Ada Researcher"],
+                    published_at="2026-01-01",
+                )
+            ],
+        ),
+    )
+
+    config = AgentConfig.load(tmp_path).context_compaction
+    artifact_context = _build_artifact_context(
+        workspace,
+        artifact_manager,
+        result.run.thread_id,
+        config,
+        "gpt-5.1",
+        900,
+    )
+    packet = _build_history_context(
+        workspace.list_messages(result.run.thread_id),
+        latest_input="继续讨论 novelty",
+        compaction_config=config,
+        model="gpt-5.1",
+        max_output_tokens=900,
+        artifact_context=artifact_context,
+    )
+    usage = build_context_usage(workspace, result.run.thread_id)
+
+    assert artifact_context["estimated_tokens"] > 0
+    assert "Current Research Idea Artifact" in packet["prompt_text"]
+    assert "Latest Idea Review Gate" in packet["prompt_text"]
+    assert "Recent Paper Search Evidence" in packet["prompt_text"]
+    assert "Geometry-Aware Facade Element Localization" in packet["prompt_text"]
+    assert f"artifact:{result.artifact.artifact_id}" in packet["artifact_source_refs"]
+    assert any(ref.startswith("review:") for ref in packet["artifact_source_refs"])
+    assert any(ref.startswith("paper_evidence:") for ref in packet["artifact_source_refs"])
+    assert usage.estimated_artifact_tokens > 0
+    assert usage.artifact_source_count >= 3
+
+
+def test_memory_search_conflicts_and_stale_recheck(tmp_path: Path) -> None:
+    workspace = ProjectWorkspace(tmp_path)
+    result = IdeaPlanRunner(workspace).run("无人机重复窗户实例定位")
+    manager = MemoryManager(workspace)
+
+    search = manager.search_memory("无人机重复窗户实例定位", thread_id=result.run.thread_id)
+
+    assert search.results
+    assert search.results[0].record.record_type == "current_plan"
+    assert search.results[0].score > 0
+
+    workspace.record_idea_review(
+        result.run.thread_id,
+        result.artifact.artifact_id,
+        result.run.run_id,
+        "Reject",
+        "Novelty is too weak.",
+    )
+    workspace.record_idea_review(
+        result.run.thread_id,
+        result.artifact.artifact_id,
+        result.run.run_id,
+        "Advance",
+        "Novelty risk is now addressed.",
+    )
+    conflicts = manager.detect_conflicts()
+
+    assert any(conflict.conflict_type == "review_decision_conflict" for conflict in conflicts)
+    assert workspace.list_conflict_records(thread_id=result.run.thread_id, status="open")
+
+    old_time = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    stale_record = MemoryRecord(
+        record_id="memory_old_paper_evidence",
+        thread_id=result.run.thread_id,
+        record_type="paper_evidence",
+        title="Old paper evidence",
+        summary="Query: old UAV window papers",
+        source_refs=["paper_evidence:old"],
+        artifact_refs=[],
+        status="active",
+        importance=3,
+        created_at=old_time,
+        updated_at=old_time,
+    )
+    workspace.upsert_memory_record(stale_record)
+
+    stale_count = manager.recheck_stale_records()
+    stale_records = workspace.list_memory_records(
+        thread_id=result.run.thread_id,
+        record_type="paper_evidence",
+        limit=10,
+    )
+
+    assert stale_count >= 1
+    assert any(record.record_id == stale_record.record_id and record.status == "stale" for record in stale_records)
 
 
 def test_idea_plan_records_context_compaction_for_long_thread(tmp_path: Path) -> None:
@@ -1015,6 +1314,7 @@ async def test_api_project_run_sse_artifact_and_trace(tmp_path: Path) -> None:
         assert capabilities_response.status_code == 200
         assert "run_cancel" in capabilities_response.json()["capabilities"]
         assert "session_artifact_update" in capabilities_response.json()["capabilities"]
+        assert "project_memory_map" in capabilities_response.json()["capabilities"]
 
         run_response = await client.post(
             "/runs/idea-plan",
@@ -1072,6 +1372,23 @@ async def test_api_project_run_sse_artifact_and_trace(tmp_path: Path) -> None:
         assert messages_payload["thread"]["name"] == "window-inspection"
         assert len(messages_payload["messages"]) >= 2
 
+        memory_response = await client.get("/memory/map")
+        assert memory_response.status_code == 200
+        memory_payload = memory_response.json()
+        assert "## Current Research State" in memory_payload["content"]
+        assert memory_payload["memory_map"]["record_count"] >= 1
+        assert any(
+            record["record_type"] == "current_plan"
+            for record in memory_payload["memory_map"]["records"]
+        )
+
+        memory_search_response = await client.get(
+            "/memory/search",
+            params={"q": "几何一致性机制", "thread_id": thread_id},
+        )
+        assert memory_search_response.status_code == 200
+        assert memory_search_response.json()["results"]
+
         usage_response = await client.get(
             f"/threads/{thread_id}/context-usage",
             params={"draft": "继续讨论实验设计"},
@@ -1111,6 +1428,54 @@ async def test_api_project_run_sse_artifact_and_trace(tmp_path: Path) -> None:
         artifact_response = await client.get(f"/artifacts/{artifact_id}")
         assert artifact_response.status_code == 200
         assert "## Evidence Needed" in artifact_response.json()["content"]
+
+        plan_response = await client.get(f"/threads/{thread_id}/plan")
+        assert plan_response.status_code == 200
+        plan_payload = plan_response.json()
+        assert plan_payload["session_status"] == "draft"
+        assert plan_payload["artifact"]["artifact_id"] == artifact_id
+        assert plan_payload["draft"]["diagnosis"]["main_uncertainty"]
+
+        review_response = await client.post(
+            f"/threads/{thread_id}/review",
+            json={"decision": "Revise", "notes": "Need stronger literature evidence."},
+        )
+        assert review_response.status_code == 200
+        assert review_response.json()["decision"] == "Revise"
+        assert review_response.json()["session_status"] == "reviewed"
+
+        reviewed_plan_response = await client.get(f"/threads/{thread_id}/plan")
+        assert reviewed_plan_response.status_code == 200
+        assert reviewed_plan_response.json()["session_status"] == "reviewed"
+
+        reviewed_memory_response = await client.post("/memory/rebuild")
+        assert reviewed_memory_response.status_code == 200
+        assert any(
+            record["record_type"] == "idea_review"
+            for record in reviewed_memory_response.json()["memory_map"]["records"]
+        )
+
+        freeze_response = await client.post(f"/threads/{thread_id}/freeze", json={})
+        assert freeze_response.status_code == 200
+        freeze_payload = freeze_response.json()
+        assert freeze_payload["artifact"]["artifact_type"] == "ResearchIdeaPlan"
+        assert freeze_payload["artifact"]["status"] == "frozen"
+        assert freeze_payload["plan"]["source_draft_artifact_id"] == artifact_id
+
+        frozen_plan_response = await client.get(f"/threads/{thread_id}/plan")
+        assert frozen_plan_response.status_code == 200
+        assert frozen_plan_response.json()["session_status"] == "frozen"
+
+        conflicts_response = await client.get("/memory/conflicts", params={"thread_id": thread_id})
+        assert conflicts_response.status_code == 200
+        assert any(
+            conflict["conflict_type"] == "freeze_gate_conflict"
+            for conflict in conflicts_response.json()["conflicts"]
+        )
+
+        recheck_response = await client.post("/memory/recheck")
+        assert recheck_response.status_code == 200
+        assert recheck_response.json()["memory_map"]["record_count"] >= 1
 
         trace_response = await client.get(f"/traces/{trace_id}")
         assert trace_response.status_code == 200

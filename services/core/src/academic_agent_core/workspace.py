@@ -12,6 +12,8 @@ from .schemas import (
     ArtifactMetadata,
     AppCacheRecord,
     AppCacheSummaryRecord,
+    ConflictRecord,
+    MemoryRecord,
     ModeRun,
     ProjectStatus,
     SSEEvent,
@@ -45,6 +47,20 @@ def _json_load(payload: str | None) -> dict[str, Any]:
 
 def _default_thread_title(thread_id: str) -> str:
     return f"Untitled {thread_id[-6:]}"
+
+
+def _session_status_from_artifact(
+    artifact_type: str | None,
+    artifact_status: str | None,
+    has_review: bool = False,
+) -> str:
+    if artifact_type == "ResearchIdeaPlan" or artifact_status == "frozen":
+        return "frozen"
+    if has_review:
+        return "reviewed"
+    if artifact_type == "ResearchIdeaPlanDraft":
+        return "draft"
+    return "needs literature"
 
 
 class ProjectWorkspace:
@@ -194,6 +210,50 @@ class ProjectWorkspace:
                 payload_json text not null,
                 created_at text not null
             );
+
+            create table if not exists idea_reviews(
+                review_id text primary key,
+                thread_id text not null,
+                artifact_id text not null,
+                run_id text not null,
+                decision text not null,
+                notes text,
+                created_at text not null
+            );
+
+            create table if not exists memory_records(
+                record_id text primary key,
+                thread_id text,
+                record_type text not null,
+                title text not null,
+                summary text not null,
+                source_refs_json text not null,
+                artifact_refs_json text not null,
+                status text not null,
+                importance integer not null,
+                created_at text not null,
+                updated_at text not null
+            );
+
+            create table if not exists memory_index(
+                record_id text primary key,
+                search_text text not null,
+                embedding_json text not null,
+                source_hash text not null,
+                updated_at text not null
+            );
+
+            create table if not exists conflict_records(
+                conflict_id text primary key,
+                thread_id text,
+                conflict_type text not null,
+                status text not null,
+                summary text not null,
+                record_refs_json text not null,
+                source_refs_json text not null,
+                created_at text not null,
+                updated_at text not null
+            );
             """
         )
 
@@ -290,7 +350,30 @@ class ProjectWorkspace:
                         where runs.thread_id = threads.thread_id
                         order by runs.updated_at desc
                         limit 1
-                    ) as last_run_at
+                    ) as last_run_at,
+                    (
+                        select artifacts.artifact_type
+                        from artifacts
+                        join runs as artifact_runs on artifact_runs.run_id = artifacts.run_id
+                        where artifact_runs.thread_id = threads.thread_id
+                          and artifacts.artifact_type in ('ResearchIdeaPlanDraft', 'ResearchIdeaPlan')
+                        order by artifacts.created_at desc
+                        limit 1
+                    ) as latest_artifact_type,
+                    (
+                        select artifacts.status
+                        from artifacts
+                        join runs as artifact_runs on artifact_runs.run_id = artifacts.run_id
+                        where artifact_runs.thread_id = threads.thread_id
+                          and artifacts.artifact_type in ('ResearchIdeaPlanDraft', 'ResearchIdeaPlan')
+                        order by artifacts.created_at desc
+                        limit 1
+                    ) as latest_artifact_status,
+                    exists (
+                        select 1
+                        from idea_reviews
+                        where idea_reviews.thread_id = threads.thread_id
+                    ) as has_review
                 from threads
                 join messages on messages.thread_id = threads.thread_id and messages.role != 'tool'
                 group by threads.thread_id
@@ -310,6 +393,13 @@ class ProjectWorkspace:
                 message_count=int(row["message_count"]),
                 latest_run_id=row["latest_run_id"],
                 latest_status=row["latest_status"],
+                session_status=_session_status_from_artifact(
+                    row["latest_artifact_type"],
+                    row["latest_artifact_status"],
+                    bool(row["has_review"]),
+                ),
+                latest_artifact_type=row["latest_artifact_type"],
+                latest_artifact_status=row["latest_artifact_status"],
             )
             for row in rows
         ]
@@ -714,6 +804,372 @@ class ProjectWorkspace:
             source_run_id=row["run_id"],
             trace_refs=_json_load(row["trace_refs_json"]).get("trace_refs", []),
             created_at=row["created_at"],
+        )
+
+    def latest_artifacts_for_thread(
+        self,
+        thread_id: str,
+        artifact_type: str,
+        limit: int = 5,
+    ) -> list[ArtifactMetadata]:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select artifacts.*
+                from artifacts
+                join runs on runs.run_id = artifacts.run_id
+                where runs.thread_id = ? and artifacts.artifact_type = ?
+                order by artifacts.created_at desc
+                limit ?
+                """,
+                (thread_id, artifact_type, limit),
+            ).fetchall()
+        return [
+            ArtifactMetadata(
+                artifact_id=row["artifact_id"],
+                artifact_type=row["artifact_type"],
+                status=row["status"],
+                title=row["title"],
+                path=row["path"],
+                metadata_path=row["metadata_path"],
+                schema_version=row["schema_version"],
+                source_run_id=row["run_id"],
+                trace_refs=_json_load(row["trace_refs_json"]).get("trace_refs", []),
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def latest_plan_artifact_for_thread(self, thread_id: str) -> ArtifactMetadata | None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select artifacts.*
+                from artifacts
+                join runs on runs.run_id = artifacts.run_id
+                where runs.thread_id = ?
+                  and artifacts.artifact_type in ('ResearchIdeaPlan', 'ResearchIdeaPlanDraft')
+                order by case artifacts.artifact_type
+                    when 'ResearchIdeaPlan' then 0
+                    else 1
+                end, artifacts.created_at desc
+                limit 1
+                """,
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ArtifactMetadata(
+            artifact_id=row["artifact_id"],
+            artifact_type=row["artifact_type"],
+            status=row["status"],
+            title=row["title"],
+            path=row["path"],
+            metadata_path=row["metadata_path"],
+            schema_version=row["schema_version"],
+            source_run_id=row["run_id"],
+            trace_refs=_json_load(row["trace_refs_json"]).get("trace_refs", []),
+            created_at=row["created_at"],
+        )
+
+    def thread_session_status(self, thread_id: str) -> str:
+        artifact = self.latest_plan_artifact_for_thread(thread_id)
+        if artifact is None:
+            return "needs literature"
+        return _session_status_from_artifact(
+            artifact.artifact_type,
+            artifact.status,
+            self.latest_idea_review(thread_id) is not None,
+        )
+
+    def record_idea_review(
+        self,
+        thread_id: str,
+        artifact_id: str,
+        run_id: str,
+        decision: str,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        self.ensure_initialized()
+        review = {
+            "review_id": new_id("review"),
+            "thread_id": thread_id,
+            "artifact_id": artifact_id,
+            "run_id": run_id,
+            "decision": decision,
+            "notes": notes,
+            "created_at": utc_now(),
+        }
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into idea_reviews(review_id, thread_id, artifact_id, run_id,
+                                         decision, notes, created_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    review["review_id"],
+                    review["thread_id"],
+                    review["artifact_id"],
+                    review["run_id"],
+                    review["decision"],
+                    review["notes"],
+                    review["created_at"],
+                ),
+            )
+            conn.commit()
+        return review
+
+    def latest_idea_review(self, thread_id: str) -> dict[str, Any] | None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select *
+                from idea_reviews
+                where thread_id = ?
+                order by created_at desc
+                limit 1
+                """,
+                (thread_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_idea_reviews(self, thread_id: str) -> list[dict[str, Any]]:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select *
+                from idea_reviews
+                where thread_id = ?
+                order by created_at desc
+                """,
+                (thread_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_memory_record(self, record: MemoryRecord) -> None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into memory_records(record_id, thread_id, record_type, title, summary,
+                                           source_refs_json, artifact_refs_json, status,
+                                           importance, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(record_id) do update set
+                    thread_id = excluded.thread_id,
+                    record_type = excluded.record_type,
+                    title = excluded.title,
+                    summary = excluded.summary,
+                    source_refs_json = excluded.source_refs_json,
+                    artifact_refs_json = excluded.artifact_refs_json,
+                    status = excluded.status,
+                    importance = excluded.importance,
+                    created_at = memory_records.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.record_id,
+                    record.thread_id,
+                    record.record_type,
+                    record.title,
+                    record.summary,
+                    _json_dump({"source_refs": record.source_refs}),
+                    _json_dump({"artifact_refs": record.artifact_refs}),
+                    record.status,
+                    record.importance,
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+            conn.commit()
+
+    def update_memory_record_status(
+        self,
+        record_id: str,
+        status: str,
+        updated_at: str | None = None,
+    ) -> None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                update memory_records
+                set status = ?, updated_at = ?
+                where record_id = ?
+                """,
+                (status, updated_at or utc_now(), record_id),
+            )
+            conn.commit()
+
+    def list_memory_records(
+        self,
+        thread_id: str | None = None,
+        record_type: str | None = None,
+        limit: int = 100,
+    ) -> list[MemoryRecord]:
+        self.ensure_initialized()
+        filters: list[str] = []
+        params: list[Any] = []
+        if thread_id is not None:
+            filters.append("thread_id = ?")
+            params.append(thread_id)
+        if record_type is not None:
+            filters.append("record_type = ?")
+            params.append(record_type)
+        where_clause = f"where {' and '.join(filters)}" if filters else ""
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select *
+                from memory_records
+                {where_clause}
+                order by importance desc, updated_at desc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        return [self._memory_record_from_row(row) for row in rows]
+
+    def upsert_memory_index(
+        self,
+        record_id: str,
+        search_text: str,
+        embedding: dict[str, float],
+        source_hash: str,
+        updated_at: str | None = None,
+    ) -> None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into memory_index(record_id, search_text, embedding_json,
+                                         source_hash, updated_at)
+                values (?, ?, ?, ?, ?)
+                on conflict(record_id) do update set
+                    search_text = excluded.search_text,
+                    embedding_json = excluded.embedding_json,
+                    source_hash = excluded.source_hash,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record_id,
+                    search_text,
+                    _json_dump({"embedding": embedding}),
+                    source_hash,
+                    updated_at or utc_now(),
+                ),
+            )
+            conn.commit()
+
+    def list_memory_index(self) -> dict[str, dict[str, Any]]:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            rows = conn.execute("select * from memory_index").fetchall()
+        index: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            index[row["record_id"]] = {
+                "search_text": row["search_text"],
+                "embedding": _json_load(row["embedding_json"]).get("embedding", {}),
+                "source_hash": row["source_hash"],
+                "updated_at": row["updated_at"],
+            }
+        return index
+
+    def upsert_conflict_record(self, conflict: ConflictRecord) -> None:
+        self.ensure_initialized()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into conflict_records(conflict_id, thread_id, conflict_type, status,
+                                             summary, record_refs_json, source_refs_json,
+                                             created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(conflict_id) do update set
+                    thread_id = excluded.thread_id,
+                    conflict_type = excluded.conflict_type,
+                    status = excluded.status,
+                    summary = excluded.summary,
+                    record_refs_json = excluded.record_refs_json,
+                    source_refs_json = excluded.source_refs_json,
+                    created_at = conflict_records.created_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    conflict.conflict_id,
+                    conflict.thread_id,
+                    conflict.conflict_type,
+                    conflict.status,
+                    conflict.summary,
+                    _json_dump({"record_refs": conflict.record_refs}),
+                    _json_dump({"source_refs": conflict.source_refs}),
+                    conflict.created_at,
+                    conflict.updated_at,
+                ),
+            )
+            conn.commit()
+
+    def list_conflict_records(
+        self,
+        thread_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[ConflictRecord]:
+        self.ensure_initialized()
+        filters: list[str] = []
+        params: list[Any] = []
+        if thread_id is not None:
+            filters.append("thread_id = ?")
+            params.append(thread_id)
+        if status is not None:
+            filters.append("status = ?")
+            params.append(status)
+        where_clause = f"where {' and '.join(filters)}" if filters else ""
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select *
+                from conflict_records
+                {where_clause}
+                order by updated_at desc
+                limit ?
+                """,
+                params,
+            ).fetchall()
+        return [self._conflict_record_from_row(row) for row in rows]
+
+    def _conflict_record_from_row(self, row: sqlite3.Row) -> ConflictRecord:
+        return ConflictRecord(
+            conflict_id=row["conflict_id"],
+            thread_id=row["thread_id"],
+            conflict_type=row["conflict_type"],
+            status=row["status"],
+            summary=row["summary"],
+            record_refs=_json_load(row["record_refs_json"]).get("record_refs", []),
+            source_refs=_json_load(row["source_refs_json"]).get("source_refs", []),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _memory_record_from_row(self, row: sqlite3.Row) -> MemoryRecord:
+        return MemoryRecord(
+            record_id=row["record_id"],
+            thread_id=row["thread_id"],
+            record_type=row["record_type"],
+            title=row["title"],
+            summary=row["summary"],
+            source_refs=_json_load(row["source_refs_json"]).get("source_refs", []),
+            artifact_refs=_json_load(row["artifact_refs_json"]).get("artifact_refs", []),
+            status=row["status"],
+            importance=int(row["importance"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     def get_artifact_metadata(self, artifact_id: str) -> ArtifactMetadata:

@@ -9,7 +9,12 @@ from langgraph.graph import END, StateGraph
 
 from .config import AgentConfig, ContextCompactionConfig
 from .harness import ArtifactManager, CacheManager, ContextBuilder, MemoryManager, TraceRecorder
-from .providers import _agent_system_prompt, _diagnosis_from_text, create_idea_diagnosis_provider
+from .providers import (
+    ProviderError,
+    _agent_system_prompt,
+    _diagnosis_from_text,
+    create_idea_diagnosis_provider,
+)
 from .search import create_default_search_engine
 from .schemas import (
     CreateIdeaPlanRunResponse,
@@ -18,6 +23,7 @@ from .schemas import (
     Diagnosis,
     ModeRun,
     ProviderResponse,
+    SearchResponse,
     ThreadMessage,
     new_id,
     utc_now,
@@ -38,6 +44,7 @@ class HistoryContextPacket(TypedDict):
     important_message_count: int
     prompt_text: str
     source_refs: list[str]
+    artifact_source_refs: list[str]
     important_source_refs: list[str]
     excluded_context_summary: str
     compact_reason: str
@@ -49,9 +56,18 @@ class HistoryContextPacket(TypedDict):
     recent_token_budget: int
     important_token_budget: int
     summary_token_budget: int
+    artifact_context_tokens: int
+    artifact_token_budget: int
     persistent_summary_id: str | None
     persistent_summary_path: str | None
     persistent_summary_covered_until_ordinal: int | None
+
+
+class ArtifactContextPacket(TypedDict):
+    prompt_text: str
+    source_refs: list[str]
+    estimated_tokens: int
+    token_budget: int
 
 
 class IdeaPlanState(TypedDict, total=False):
@@ -119,12 +135,22 @@ class IdeaPlanRunner:
             for message in self.workspace.list_messages(run.thread_id)
             if message.run_id != run_id
         ]
+        artifact_context = _build_artifact_context(
+            self.workspace,
+            self.artifact_manager,
+            run.thread_id,
+            self.config.context_compaction,
+            self.provider_profile.model,
+            self.provider_profile.max_output_tokens,
+            latest_input=run.input_idea,
+        )
         draft_history_context = _build_history_context(
             history,
             latest_input=run.input_idea,
             compaction_config=self.config.context_compaction,
             model=self.provider_profile.model,
             max_output_tokens=self.provider_profile.max_output_tokens,
+            artifact_context=artifact_context,
         )
         persistent_summary: ConversationSummary | None = None
         if draft_history_context["compacted"]:
@@ -165,6 +191,7 @@ class IdeaPlanRunner:
             compaction_config=self.config.context_compaction,
             model=self.provider_profile.model,
             max_output_tokens=self.provider_profile.max_output_tokens,
+            artifact_context=artifact_context,
         )
         self.workspace.add_event(
             run.run_id,
@@ -176,6 +203,7 @@ class IdeaPlanRunner:
                 "recent_message_count": history_context["recent_message_count"],
                 "important_message_count": history_context["important_message_count"],
                 "source_refs": history_context["source_refs"],
+                "artifact_source_refs": history_context["artifact_source_refs"],
                 "important_source_refs": history_context["important_source_refs"],
                 "excluded_context_summary": history_context["excluded_context_summary"],
                 "compact_reason": history_context["compact_reason"],
@@ -187,6 +215,8 @@ class IdeaPlanRunner:
                 "recent_token_budget": history_context["recent_token_budget"],
                 "important_token_budget": history_context["important_token_budget"],
                 "summary_token_budget": history_context["summary_token_budget"],
+                "artifact_context_tokens": history_context["artifact_context_tokens"],
+                "artifact_token_budget": history_context["artifact_token_budget"],
                 "persistent_summary_id": history_context["persistent_summary_id"],
                 "persistent_summary_path": history_context["persistent_summary_path"],
                 "persistent_summary_covered_until_ordinal": (
@@ -352,7 +382,11 @@ class IdeaPlanRunner:
                 provider=provider_request.provider,
                 model=provider_request.model,
             )
-            provider_response = self.provider.generate_agent_response(provider_request, tools)
+            provider_response = self._generate_agent_response(
+                run_id,
+                provider_request,
+                tools,
+            )
             self.cache_manager.store_provider_response(provider_request, provider_response)
             self.workspace.add_event(
                 run_id,
@@ -487,6 +521,31 @@ class IdeaPlanRunner:
             result = self.tool_registry.execute(tc["name"], tc["arguments"])
             result_text = json.dumps(result, ensure_ascii=False)
             result_summary = _tool_result_summary(tc["name"], result)
+            if tc["name"] == "paper_search":
+                try:
+                    search_response = SearchResponse.model_validate(result)
+                    artifact, _evidence = self.artifact_manager.write_paper_search_evidence(
+                        run_id,
+                        search_response,
+                    )
+                    self.workspace.add_event(
+                        run_id,
+                        "paper_search.evidence.created",
+                        {
+                            "artifact_id": artifact.artifact_id,
+                            "artifact_type": artifact.artifact_type,
+                            "path": artifact.path,
+                            "metadata_path": artifact.metadata_path,
+                            "query": search_response.query,
+                            "result_count": len(search_response.results),
+                        },
+                    )
+                except Exception as exc:
+                    self.workspace.add_event(
+                        run_id,
+                        "paper_search.evidence.failed",
+                        {"error": str(exc)},
+                    )
 
             self.workspace.add_message(
                 thread_id, "tool",
@@ -562,7 +621,16 @@ class IdeaPlanRunner:
             if message.run_id != run_id
         ]
 
-        context = self.context_builder.build_for_idea(idea)
+        history_context = state.get("history_context", {})
+        context = self.context_builder.build_for_idea(
+            idea,
+            relevant_artifacts=list(history_context.get("artifact_source_refs", [])),
+            source_refs=list(history_context.get("source_refs", [])),
+            excluded_context_summary=str(
+                history_context.get("excluded_context_summary")
+                or "No prior context exclusions recorded."
+            ),
+        )
         self.workspace.add_event(
             run_id,
             "context.built",
@@ -591,6 +659,11 @@ class IdeaPlanRunner:
             "activity.started",
             stage="answering",
             message="我开始把诊断流式输出给你。",
+        )
+        self.workspace.add_event(
+            run_id,
+            "assistant.reset",
+            {"reason": "final_answer"},
         )
         self._emit_assistant_stream(run_id, assistant_content)
         self._add_activity(
@@ -667,6 +740,7 @@ class IdeaPlanRunner:
                 "metadata_path": artifact.metadata_path,
             },
         )
+        self._refresh_memory_map(run_id)
 
         return {
             **state,
@@ -676,6 +750,119 @@ class IdeaPlanRunner:
             "draft": draft.model_dump(mode="json"),
             "diagnosis": diagnosis.model_dump(mode="json"),
         }
+
+    def _generate_agent_response(
+        self,
+        run_id: str,
+        provider_request: Any,
+        tools: list[dict[str, Any]],
+    ) -> ProviderResponse:
+        stream = self.provider.stream_agent_response(provider_request, tools)
+        if stream is None:
+            return self.provider.generate_agent_response(provider_request, tools)
+
+        self.workspace.add_event(
+            run_id,
+            "provider.stream.started",
+            {
+                "provider": provider_request.provider,
+                "model": provider_request.model,
+                "profile": provider_request.profile,
+            },
+        )
+        self._add_activity(
+            run_id,
+            "activity.updated",
+            stage="thinking",
+            message="planner 已进入流式输出；我会实时展示可见内容，隐藏推理链只保留为内部记录。",
+            provider=provider_request.provider,
+            model=provider_request.model,
+        )
+
+        chunks = 0
+        reasoning_chunks = 0
+        final_response: ProviderResponse | None = None
+        try:
+            for chunk in stream:
+                self._raise_if_cancelled(run_id)
+                chunk_type = chunk.get("type")
+                if chunk_type == "content_delta":
+                    delta = str(chunk.get("delta") or "")
+                    if not delta:
+                        continue
+                    self.workspace.add_event(
+                        run_id,
+                        "assistant.delta",
+                        {
+                            "index": chunks,
+                            "delta": delta,
+                            "source": "provider_stream",
+                        },
+                    )
+                    chunks += 1
+                    continue
+                if chunk_type == "reasoning_delta":
+                    reasoning_chunks += 1
+                    continue
+                if chunk_type == "tool_call_delta":
+                    self.workspace.add_event(
+                        run_id,
+                        "provider.tool_call.delta",
+                        {
+                            "tool_count": len(chunk.get("tool_calls") or []),
+                            "source": "provider_stream",
+                        },
+                    )
+                    continue
+                if chunk_type == "completed":
+                    response = chunk.get("response")
+                    if isinstance(response, ProviderResponse):
+                        final_response = response
+        except ProviderError as exc:
+            self.workspace.add_event(
+                run_id,
+                "provider.stream.fallback",
+                {
+                    "provider": provider_request.provider,
+                    "model": provider_request.model,
+                    "error": str(exc),
+                },
+            )
+            self._add_activity(
+                run_id,
+                "activity.updated",
+                stage="thinking",
+                message="planner 流式调用失败，我切换到非流式请求完成本轮诊断。",
+                provider=provider_request.provider,
+                model=provider_request.model,
+            )
+            return self.provider.generate_agent_response(provider_request, tools)
+
+        if final_response is None:
+            raise ProviderError("Provider stream ended without a completed response.")
+
+        if chunks:
+            self.workspace.add_event(
+                run_id,
+                "assistant.completed",
+                {
+                    "chunks": chunks,
+                    "source": "provider_stream",
+                    "reasoning_chunks_hidden": reasoning_chunks,
+                },
+            )
+        self.workspace.add_event(
+            run_id,
+            "provider.stream.completed",
+            {
+                "provider": final_response.provider,
+                "model": final_response.model,
+                "response_id": final_response.response_id,
+                "chunks": chunks,
+                "reasoning_chunks_hidden": reasoning_chunks,
+            },
+        )
+        return final_response
 
     def _synthesize_final_diagnosis(self, state: IdeaPlanState, idea: str) -> Diagnosis:
         run_id = state["run_id"]
@@ -793,6 +980,19 @@ class IdeaPlanRunner:
             run_id,
             "assistant.completed",
             {"chunks": len(chunks), "length": len(content)},
+        )
+
+    def _refresh_memory_map(self, run_id: str) -> None:
+        memory_map = self.memory_manager.rebuild_project_memory_map()
+        self.workspace.add_event(
+            run_id,
+            "memory.map.updated",
+            {
+                "path": memory_map.markdown_path,
+                "metadata_path": memory_map.metadata_path,
+                "record_count": memory_map.record_count,
+                "thread_count": memory_map.thread_count,
+            },
         )
 
     def _maybe_refine_conversation_summary(
@@ -1105,6 +1305,193 @@ def _recent_token_budget(
     return max(128, int(history_token_budget * config.recent_token_ratio))
 
 
+def _artifact_token_budget(config: ContextCompactionConfig, history_token_budget: int) -> int:
+    ratio_budget = max(400, int(history_token_budget * config.artifact_token_ratio))
+    return max(400, min(config.artifact_max_tokens, ratio_budget))
+
+
+def _prepend_artifact_context(history_prompt: str, artifact_context_text: str) -> str:
+    if not artifact_context_text.strip():
+        return history_prompt
+    return (
+        "Artifact memory context (highest priority, source-referenced):\n"
+        f"{artifact_context_text.strip()}\n\n"
+        f"{history_prompt}"
+    )
+
+
+def _build_artifact_context(
+    workspace: ProjectWorkspace,
+    artifact_manager: ArtifactManager,
+    thread_id: str,
+    compaction_config: ContextCompactionConfig,
+    model: str,
+    max_output_tokens: int,
+    latest_input: str = "",
+) -> ArtifactContextPacket:
+    history_budget = _history_token_budget(compaction_config, model, max_output_tokens)
+    token_budget = _artifact_token_budget(compaction_config, history_budget)
+    chars_per_token = max(1.0, compaction_config.chars_per_token)
+    char_budget = max(600, int(token_budget * chars_per_token))
+    lines: list[str] = []
+    source_refs: list[str] = []
+
+    plan_metadata = workspace.latest_plan_artifact_for_thread(thread_id)
+    if plan_metadata is not None:
+        source_refs.append(f"artifact:{plan_metadata.artifact_id}")
+        try:
+            if plan_metadata.artifact_type == "ResearchIdeaPlan":
+                _, plan = artifact_manager.read_research_idea_plan(plan_metadata.artifact_id)
+                diagnosis = plan.diagnosis
+                status = plan.status
+                title = plan.title
+            else:
+                _, draft = artifact_manager.read_research_idea_draft(plan_metadata.artifact_id)
+                diagnosis = draft.diagnosis
+                status = "draft"
+                title = draft.title
+            lines.extend(
+                [
+                    "## Current Research Idea Artifact",
+                    f"- Artifact: `{plan_metadata.artifact_id}` ({plan_metadata.artifact_type}, {status})",
+                    f"- Path: `{plan_metadata.path}`",
+                    f"- Title: {title}",
+                    f"- Problem: {_truncate_one_line(diagnosis.problem, 420)}",
+                    f"- Gap: {_truncate_one_line(diagnosis.gap, 420)}",
+                    "- Candidate Mechanism: "
+                    f"{_truncate_one_line(diagnosis.candidate_mechanism, 420)}",
+                    "- Main Uncertainty: "
+                    f"{_truncate_one_line(diagnosis.main_uncertainty, 420)}",
+                    "- Evidence Needed: "
+                    + " | ".join(_truncate_one_line(item, 180) for item in diagnosis.evidence_needed[:5]),
+                ]
+            )
+            if diagnosis.clarifying_questions:
+                lines.append(
+                    "- Clarifying Questions: "
+                    + " | ".join(
+                        _truncate_one_line(item, 160)
+                        for item in diagnosis.clarifying_questions[:4]
+                    )
+                )
+        except Exception as exc:
+            lines.extend(
+                [
+                    "## Current Research Idea Artifact",
+                    f"- Artifact: `{plan_metadata.artifact_id}` ({plan_metadata.artifact_type})",
+                    f"- Read error: {_truncate_one_line(str(exc), 240)}",
+                ]
+            )
+
+    review = workspace.latest_idea_review(thread_id)
+    if review is not None:
+        source_refs.append(f"review:{review['review_id']}")
+        lines.extend(
+            [
+                "",
+                "## Latest Idea Review Gate",
+                f"- Review: `{review['review_id']}`",
+                f"- Decision: `{review['decision']}`",
+                f"- Artifact: `{review['artifact_id']}`",
+                f"- Created at: `{review['created_at']}`",
+                f"- Notes: {_truncate_one_line(str(review.get('notes') or 'None'), 520)}",
+            ]
+        )
+
+    evidence_limit = max(0, compaction_config.paper_evidence_limit)
+    evidence_artifacts = workspace.latest_artifacts_for_thread(
+        thread_id,
+        "PaperSearchEvidence",
+        limit=evidence_limit,
+    )
+    if evidence_artifacts:
+        lines.extend(["", f"## Recent Paper Search Evidence ({len(evidence_artifacts)})"])
+    for metadata in evidence_artifacts:
+        source_refs.append(f"paper_evidence:{metadata.artifact_id}")
+        try:
+            _, evidence = artifact_manager.read_paper_search_evidence(metadata.artifact_id)
+            response = evidence.search_response
+            titles = [
+                _truncate_one_line(result.title, 180)
+                for result in response.results[:5]
+                if result.title
+            ]
+            lines.extend(
+                [
+                    f"- Evidence: `{metadata.artifact_id}`",
+                    f"  - Query: {evidence.query}",
+                    f"  - Source: `{response.source}`; retrieved_at: `{response.retrieved_at}`",
+                    f"  - Result count: `{len(response.results)}`",
+                    f"  - Error: {_truncate_one_line(str(response.error or 'None'), 240)}",
+                    f"  - Top titles: {' | '.join(titles) if titles else 'None'}",
+                ]
+            )
+        except Exception as exc:
+            lines.extend(
+                [
+                    f"- Evidence: `{metadata.artifact_id}`",
+                    f"  - Read error: {_truncate_one_line(str(exc), 240)}",
+                ]
+            )
+
+    memory_query = latest_input.strip()
+    if memory_query:
+        memory_hits = MemoryManager(workspace).search_memory(
+            memory_query,
+            thread_id=thread_id,
+            limit=6,
+        ).results
+    else:
+        memory_hits = []
+    if memory_hits:
+        lines.extend(["", f"## Retrieved Memory Records ({len(memory_hits)})"])
+    for hit in memory_hits:
+        record = hit.record
+        source_refs.append(f"memory:{record.record_id}")
+        lines.extend(
+            [
+                f"- Memory: `{record.record_id}` ({record.record_type}, score={hit.score})",
+                f"  - Title: {record.title}",
+                f"  - Status: `{record.status}`; reason: {hit.reason}",
+                f"  - Summary: {_truncate_one_line(record.summary, 520)}",
+                f"  - Source refs: {', '.join(record.source_refs[:8]) or 'None'}",
+            ]
+        )
+
+    open_conflicts = workspace.list_conflict_records(
+        thread_id=thread_id,
+        status="open",
+        limit=5,
+    )
+    if open_conflicts:
+        lines.extend(["", f"## Open Memory Conflicts ({len(open_conflicts)})"])
+    for conflict in open_conflicts:
+        source_refs.append(f"conflict:{conflict.conflict_id}")
+        lines.extend(
+            [
+                f"- Conflict: `{conflict.conflict_id}` ({conflict.conflict_type})",
+                f"  - Summary: {_truncate_one_line(conflict.summary, 520)}",
+                f"  - Source refs: {', '.join(conflict.source_refs[:8]) or 'None'}",
+            ]
+        )
+
+    if not lines:
+        return ArtifactContextPacket(
+            prompt_text="",
+            source_refs=[],
+            estimated_tokens=0,
+            token_budget=token_budget,
+        )
+
+    prompt_text = _truncate_preserving_lines("\n".join(lines), char_budget)
+    return ArtifactContextPacket(
+        prompt_text=prompt_text,
+        source_refs=source_refs,
+        estimated_tokens=_estimate_text_tokens(prompt_text, chars_per_token),
+        token_budget=token_budget,
+    )
+
+
 def _estimate_messages_chars(messages: list[ThreadMessage]) -> int:
     return sum(len(message.content) for message in messages)
 
@@ -1244,6 +1631,7 @@ def _build_history_context(
     compaction_config: ContextCompactionConfig | None = None,
     model: str = "",
     max_output_tokens: int = 900,
+    artifact_context: ArtifactContextPacket | None = None,
     recent_message_limit: int | None = None,
     summary_char_limit: int | None = None,
     recent_char_limit: int | None = None,
@@ -1261,6 +1649,14 @@ def _build_history_context(
         if summary_char_limit is not None
         else max(1, int(history_token_budget * config.summary_token_ratio))
     )
+    artifact_context_text = artifact_context["prompt_text"] if artifact_context else ""
+    artifact_source_refs = artifact_context["source_refs"] if artifact_context else []
+    artifact_context_tokens = artifact_context["estimated_tokens"] if artifact_context else 0
+    artifact_token_budget = (
+        artifact_context["token_budget"]
+        if artifact_context
+        else _artifact_token_budget(config, history_token_budget)
+    )
     max_recent_messages = recent_message_limit or config.max_recent_messages
     min_recent_messages = min(config.min_recent_messages, max_recent_messages)
     per_message_char_limit = max(120, int(config.per_message_token_limit * chars_per_token))
@@ -1274,8 +1670,12 @@ def _build_history_context(
             older_message_count=0,
             recent_message_count=0,
             important_message_count=0,
-            prompt_text="No previous discussion in this thread.",
-            source_refs=[],
+            prompt_text=_prepend_artifact_context(
+                "No previous discussion in this thread.",
+                artifact_context_text,
+            ),
+            source_refs=artifact_source_refs,
+            artifact_source_refs=artifact_source_refs,
             important_source_refs=[],
             excluded_context_summary="No previous non-tool messages.",
             compact_reason="no previous non-tool messages",
@@ -1287,6 +1687,8 @@ def _build_history_context(
             recent_token_budget=recent_token_budget,
             important_token_budget=important_token_budget,
             summary_token_budget=summary_token_budget,
+            artifact_context_tokens=artifact_context_tokens,
+            artifact_token_budget=artifact_token_budget,
             persistent_summary_id=(
                 persistent_summary.summary_id if persistent_summary is not None else None
             ),
@@ -1320,7 +1722,8 @@ def _build_history_context(
         chars_per_token=chars_per_token,
         per_message_token_limit=config.per_message_token_limit,
     )
-    source_refs = [f"msg:{message.ordinal}" for message in non_tool_history]
+    message_source_refs = [f"msg:{message.ordinal}" for message in non_tool_history]
+    source_refs = [*artifact_source_refs, *message_source_refs]
 
     if compacted:
         recent_ordinals = {message.ordinal for message in recent_messages}
@@ -1362,18 +1765,20 @@ def _build_history_context(
             estimated_history_tokens=estimated_history_tokens,
             compact_threshold_tokens=compact_threshold_tokens,
         )
-        prompt_text = (
+        history_prompt = (
             "Context compaction policy:\n"
             "- Full transcript is stored locally in SQLite and trace; this packet is a "
             "compressed view for the current LLM call.\n"
-            "- Layer 2 is a persistent source-referenced conversation summary. Layer 1 "
-            "keeps the most recent messages and high-importance older snippets verbatim "
-            "for this call.\n"
+            "- Priority 0 is artifact memory: the current ResearchIdeaPlan state, latest "
+            "review gate, and paper-search evidence. Layer 2 is a persistent "
+            "source-referenced conversation summary. Layer 1 keeps the most recent "
+            "messages and high-importance older snippets verbatim for this call.\n"
             f"- Current context focus: {context_focus}.\n"
             f"- Estimated history tokens: {estimated_history_tokens}; history budget: "
             f"{history_token_budget}; compact threshold: {compact_threshold_tokens}; "
             f"recent budget: {recent_token_budget}; important snippet budget: "
-            f"{important_token_budget}; summary budget: {summary_token_budget}.\n"
+            f"{important_token_budget}; summary budget: {summary_token_budget}; "
+            f"artifact budget: {artifact_token_budget}.\n"
             "- Treat compacted older history as lossy. Ask the user or inspect stored "
             "artifacts if a missing detail matters.\n\n"
             f"{older_header} ({len(older_messages)} older messages):\n"
@@ -1382,10 +1787,12 @@ def _build_history_context(
             f"Recent exact transcript ({len(recent_messages)} messages):\n"
             f"{_format_recent_transcript(recent_messages, per_message_char_limit)}"
         )
+        prompt_text = _prepend_artifact_context(history_prompt, artifact_context_text)
         excluded = (
             f"{compact_reason}; {len(older_messages)} older non-tool messages were summarized; "
             f"{len(important_messages)} important older messages and "
-            f"{len(recent_messages)} recent messages were kept verbatim."
+            f"{len(recent_messages)} recent messages were kept verbatim; "
+            f"{len(artifact_source_refs)} artifact memory refs were injected."
         )
     else:
         older_messages = []
@@ -1399,11 +1806,15 @@ def _build_history_context(
                 f"({estimated_history_tokens}/{compact_threshold_tokens} estimated tokens)"
             )
         )
-        prompt_text = (
+        history_prompt = (
             f"Recent exact transcript ({len(recent_messages)} messages):\n"
             f"{_format_recent_transcript(recent_messages, per_message_char_limit)}"
         )
-        excluded = f"No older messages were summarized; {compact_reason}."
+        prompt_text = _prepend_artifact_context(history_prompt, artifact_context_text)
+        excluded = (
+            f"No older messages were summarized; {compact_reason}; "
+            f"{len(artifact_source_refs)} artifact memory refs were injected."
+        )
 
     return HistoryContextPacket(
         compacted=compacted,
@@ -1413,6 +1824,7 @@ def _build_history_context(
         important_message_count=len(important_messages),
         prompt_text=prompt_text,
         source_refs=source_refs,
+        artifact_source_refs=artifact_source_refs,
         important_source_refs=[f"msg:{message.ordinal}" for message in important_messages],
         excluded_context_summary=excluded,
         compact_reason=compact_reason,
@@ -1424,6 +1836,8 @@ def _build_history_context(
         recent_token_budget=recent_token_budget,
         important_token_budget=important_token_budget,
         summary_token_budget=summary_token_budget,
+        artifact_context_tokens=artifact_context_tokens,
+        artifact_token_budget=artifact_token_budget,
         persistent_summary_id=(
             persistent_summary.summary_id if persistent_summary is not None else None
         ),
@@ -1447,17 +1861,32 @@ def build_context_usage(
     profile = config.profile("planner")
     compaction = config.context_compaction
     messages = workspace.list_messages(thread_id) if thread_id else []
+    artifact_context = (
+        _build_artifact_context(
+            workspace,
+            ArtifactManager(workspace),
+            thread_id,
+            compaction,
+            profile.model,
+            profile.max_output_tokens,
+            latest_input=draft_input,
+        )
+        if thread_id
+        else None
+    )
     history_context = _build_history_context(
         messages,
         latest_input=draft_input,
         compaction_config=compaction,
         model=profile.model,
         max_output_tokens=profile.max_output_tokens,
+        artifact_context=artifact_context,
     )
     chars_per_token = max(1.0, compaction.chars_per_token)
     draft_tokens = _estimate_text_tokens(draft_input, chars_per_token)
     estimated_thread_tokens = history_context["estimated_history_tokens"]
-    estimated_total_tokens = estimated_thread_tokens + draft_tokens
+    estimated_artifact_tokens = history_context["artifact_context_tokens"]
+    estimated_total_tokens = estimated_thread_tokens + estimated_artifact_tokens + draft_tokens
     context_window_tokens = history_context["context_window_tokens"]
     estimated_context_tokens = min(
         context_window_tokens,
@@ -1477,6 +1906,7 @@ def build_context_usage(
         compact_trigger_ratio=compaction.compact_trigger_ratio,
         max_history_tokens=compaction.max_history_tokens,
         estimated_thread_tokens=estimated_thread_tokens,
+        estimated_artifact_tokens=estimated_artifact_tokens,
         estimated_draft_tokens=draft_tokens,
         estimated_total_tokens=estimated_total_tokens,
         estimated_context_tokens=estimated_context_tokens,
@@ -1492,6 +1922,7 @@ def build_context_usage(
         recent_message_count=history_context["recent_message_count"],
         older_message_count=history_context["older_message_count"],
         important_message_count=history_context["important_message_count"],
+        artifact_source_count=len(history_context["artifact_source_refs"]),
         chars_per_token=chars_per_token,
     )
 

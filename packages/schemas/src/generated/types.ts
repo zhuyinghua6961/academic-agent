@@ -36,6 +36,9 @@ export interface ThreadSessionSummary {
   message_count: number;
   latest_run_id?: string | null;
   latest_status?: string | null;
+  session_status?: string | null;
+  latest_artifact_type?: string | null;
+  latest_artifact_status?: string | null;
 }
 
 export interface ThreadMessage {
@@ -166,9 +169,70 @@ export interface ConversationSummary {
   updated_at: string;
 }
 
+export interface MemoryRecord {
+  record_id: string;
+  thread_id?: string | null;
+  record_type: "current_plan" | "idea_review" | "paper_evidence" | "conversation_summary" | "stale_recheck";
+  title: string;
+  summary: string;
+  source_refs?: string[];
+  artifact_refs?: string[];
+  status?: "active" | "stale" | "conflict";
+  importance?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectMemoryMap {
+  project_id: string;
+  markdown_path: string;
+  metadata_path: string;
+  updated_at: string;
+  thread_count: number;
+  record_count: number;
+  source_refs?: string[];
+  records?: MemoryRecord[];
+}
+
+export interface MemorySearchResult {
+  record: MemoryRecord;
+  score: number;
+  vector_score: number;
+  keyword_score: number;
+  reason: string;
+}
+
+export interface MemorySearchResponse {
+  query: string;
+  thread_id?: string | null;
+  results?: MemorySearchResult[];
+}
+
+export interface ConflictRecord {
+  conflict_id: string;
+  thread_id?: string | null;
+  conflict_type: "review_decision_conflict" | "freeze_gate_conflict" | "stale_evidence_conflict";
+  status?: "open" | "resolved";
+  summary: string;
+  record_refs?: string[];
+  source_refs?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConflictListResponse {
+  conflicts?: ConflictRecord[];
+}
+
+export interface MemoryRecheckResponse {
+  stale_count: number;
+  conflict_count: number;
+  memory_map: ProjectMemoryMap;
+}
+
 export interface ArtifactMetadata {
   artifact_id: string;
-  artifact_type: "ResearchIdeaPlanDraft";
+  artifact_type: "ResearchIdeaPlanDraft" | "ResearchIdeaPlan" | "PaperSearchEvidence";
   status: "draft" | "frozen";
   title: string;
   path: string;
@@ -185,6 +249,32 @@ export interface ResearchIdeaPlanDraft {
   source_run_id: string;
   diagnosis: Diagnosis;
   context_id: string;
+  markdown_path: string;
+  metadata_path: string;
+  created_at: string;
+}
+
+export interface ResearchIdeaPlan {
+  plan_id: string;
+  artifact_id: string;
+  source_draft_artifact_id: string;
+  source_run_id: string;
+  title: string;
+  diagnosis: Diagnosis;
+  context_id: string;
+  markdown_path: string;
+  metadata_path: string;
+  status: "frozen";
+  frozen_at: string;
+  created_at: string;
+}
+
+export interface PaperSearchEvidence {
+  evidence_id: string;
+  artifact_id: string;
+  source_run_id: string;
+  query: string;
+  search_response: SearchResponse;
   markdown_path: string;
   metadata_path: string;
   created_at: string;
@@ -330,6 +420,33 @@ export interface RunResultResponse {
   messages?: ThreadMessage[];
 }
 
+export interface CurrentIdeaPlanResponse {
+  thread: WorkflowThread;
+  artifact?: ArtifactMetadata | null;
+  draft?: ResearchIdeaPlanDraft | ResearchIdeaPlan | null;
+  session_status: string;
+  latest_run_id?: string | null;
+  latest_status?: string | null;
+}
+
+export interface FreezeIdeaPlanResponse {
+  thread: WorkflowThread;
+  artifact: ArtifactMetadata;
+  plan: ResearchIdeaPlan;
+}
+
+export interface ReviewIdeaPlanRequest {
+  decision: "Reject" | "Revise" | "Advance";
+  notes?: string | null;
+}
+
+export interface ReviewIdeaPlanResponse {
+  thread: WorkflowThread;
+  decision: "Reject" | "Revise" | "Advance";
+  session_status: string;
+  notes?: string | null;
+}
+
 export interface ThreadMessagesResponse {
   thread: WorkflowThread;
   messages?: ThreadMessage[];
@@ -344,6 +461,7 @@ export interface ContextUsageResponse {
   compact_trigger_ratio: number;
   max_history_tokens: number;
   estimated_thread_tokens: number;
+  estimated_artifact_tokens: number;
   estimated_draft_tokens: number;
   estimated_total_tokens: number;
   estimated_context_tokens: number;
@@ -356,6 +474,7 @@ export interface ContextUsageResponse {
   recent_message_count: number;
   older_message_count: number;
   important_message_count: number;
+  artifact_source_count: number;
   chars_per_token: number;
 }
 
@@ -371,4 +490,9 @@ export interface ArtifactReadResponse {
 export interface TraceReadResponse {
   trace: TraceRecord;
   payload: Record<string, unknown>;
+}
+
+export interface MemoryMapResponse {
+  memory_map: ProjectMemoryMap;
+  content: string;
 }

@@ -117,6 +117,9 @@ class ContextCompactionConfig:
         important_token_ratio: float = 0.25,
         summary_token_ratio: float = 0.35,
         per_message_token_limit: int = 240,
+        artifact_token_ratio: float = 0.20,
+        artifact_max_tokens: int = 4000,
+        paper_evidence_limit: int = 3,
     ) -> None:
         resolved_context_window_tokens = context_window_tokens or model_context_tokens
         self.enabled = enabled
@@ -134,6 +137,25 @@ class ContextCompactionConfig:
         self.important_token_ratio = important_token_ratio
         self.summary_token_ratio = summary_token_ratio
         self.per_message_token_limit = per_message_token_limit
+        self.artifact_token_ratio = artifact_token_ratio
+        self.artifact_max_tokens = artifact_max_tokens
+        self.paper_evidence_limit = paper_evidence_limit
+
+
+class MemoryConfig:
+    def __init__(
+        self,
+        retrieval_limit: int = 8,
+        vector_dimensions: int = 96,
+        paper_evidence_ttl_days: int = 30,
+        stale_recheck_enabled: bool = True,
+        conflict_detection_enabled: bool = True,
+    ) -> None:
+        self.retrieval_limit = retrieval_limit
+        self.vector_dimensions = vector_dimensions
+        self.paper_evidence_ttl_days = paper_evidence_ttl_days
+        self.stale_recheck_enabled = stale_recheck_enabled
+        self.conflict_detection_enabled = conflict_detection_enabled
 
 
 def live_providers_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -148,12 +170,14 @@ class AgentConfig:
         profiles: dict[ProviderProfileName, ProviderProfileConfig],
         search: SearchConfig,
         context_compaction: ContextCompactionConfig,
+        memory: MemoryConfig,
         sources: list[str],
         env: dict[str, str] | None = None,
     ) -> None:
         self.profiles = profiles
         self.search = search
         self.context_compaction = context_compaction
+        self.memory = memory
         self.sources = sources
         self.env = dict(env if env is not None else os.environ)
 
@@ -165,6 +189,7 @@ class AgentConfig:
         raw_profiles: dict[str, dict[str, Any]] = {}
         raw_search: dict[str, Any] = {}
         raw_context: dict[str, Any] = {}
+        raw_memory: dict[str, Any] = {}
 
         for config_path in _config_paths(project_root_path, source_env):
             if config_path.exists():
@@ -177,6 +202,8 @@ class AgentConfig:
                     raw_search = _deep_merge(raw_search, data["search"])
                 if isinstance(data.get("context"), dict):
                     raw_context = _deep_merge(raw_context, data["context"])
+                if isinstance(data.get("memory"), dict):
+                    raw_memory = _deep_merge(raw_memory, data["memory"])
 
         profiles = _default_profiles()
         for name, payload in raw_profiles.items():
@@ -191,6 +218,7 @@ class AgentConfig:
             profiles=profiles,
             search=_search_config_from_raw(raw_search),
             context_compaction=_context_compaction_from_raw(raw_context),
+            memory=_memory_config_from_raw(raw_memory),
             sources=sources,
             env=source_env,
         )
@@ -246,6 +274,16 @@ def render_default_project_config() -> str:
         "important_token_ratio = 0.25\n"
         "summary_token_ratio = 0.35\n"
         "per_message_token_limit = 240\n\n"
+        "# Artifact-first memory context: current plan/review/evidence is injected before chat history.\n"
+        "artifact_token_ratio = 0.20\n"
+        "artifact_max_tokens = 4000\n"
+        "paper_evidence_limit = 3\n\n"
+        "[memory]\n"
+        "retrieval_limit = 8\n"
+        "vector_dimensions = 96\n"
+        "paper_evidence_ttl_days = 30\n"
+        "stale_recheck_enabled = true\n"
+        "conflict_detection_enabled = true\n\n"
         "[providers.planner]\n"
         'provider = "mock"\n'
         'model = "mock-idea-diagnoser-v0"\n'
@@ -392,6 +430,19 @@ def _context_compaction_from_raw(raw_context: dict[str, Any]) -> ContextCompacti
         important_token_ratio=_ratio_value(compaction.get("important_token_ratio"), 0.25),
         summary_token_ratio=_ratio_value(compaction.get("summary_token_ratio"), 0.35),
         per_message_token_limit=_positive_int(compaction.get("per_message_token_limit"), 240),
+        artifact_token_ratio=_ratio_value(compaction.get("artifact_token_ratio"), 0.20),
+        artifact_max_tokens=_positive_int(compaction.get("artifact_max_tokens"), 4000),
+        paper_evidence_limit=_positive_int(compaction.get("paper_evidence_limit"), 3),
+    )
+
+
+def _memory_config_from_raw(raw_memory: dict[str, Any]) -> MemoryConfig:
+    return MemoryConfig(
+        retrieval_limit=_positive_int(raw_memory.get("retrieval_limit"), 8),
+        vector_dimensions=_positive_int(raw_memory.get("vector_dimensions"), 96),
+        paper_evidence_ttl_days=_positive_int(raw_memory.get("paper_evidence_ttl_days"), 30),
+        stale_recheck_enabled=bool(raw_memory.get("stale_recheck_enabled", True)),
+        conflict_detection_enabled=bool(raw_memory.get("conflict_detection_enabled", True)),
     )
 
 

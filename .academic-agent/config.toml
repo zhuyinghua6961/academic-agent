@@ -22,6 +22,18 @@ important_message_limit = 24
 important_token_ratio = 0.25
 summary_token_ratio = 0.35
 per_message_token_limit = 2000
+# Artifact-first memory context: current plan/review/search evidence is always
+# injected before compacted chat history.
+artifact_token_ratio = 0.20
+artifact_max_tokens = 12000
+paper_evidence_limit = 5
+
+[memory]
+retrieval_limit = 8
+vector_dimensions = 96
+paper_evidence_ttl_days = 30
+stale_recheck_enabled = true
+conflict_detection_enabled = true
 
 [providers.planner]
 provider = "deepseek"

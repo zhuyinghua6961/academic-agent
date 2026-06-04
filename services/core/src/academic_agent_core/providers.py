@@ -5,7 +5,7 @@ import os
 import re
 from copy import deepcopy
 from json import JSONDecodeError
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol, TypedDict, cast
 
 import httpx
 
@@ -13,6 +13,7 @@ from .config import live_providers_enabled
 from .harness import stable_json_hash
 from .schemas import (
     Diagnosis,
+    ProviderName,
     ProviderProfileConfig,
     ProviderRequest,
     ProviderResponse,
@@ -28,6 +29,14 @@ APP_USER_AGENT = "academic-agent/0.1.0"
 
 class ProviderError(RuntimeError):
     pass
+
+
+class ProviderStreamChunk(TypedDict, total=False):
+    type: str
+    delta: str
+    reasoning_delta: str
+    tool_calls: list[dict[str, Any]]
+    response: ProviderResponse
 
 
 class IdeaDiagnosisProvider(Protocol):
@@ -56,6 +65,13 @@ class IdeaDiagnosisProvider(Protocol):
         request: ProviderRequest,
         tools: list[dict[str, Any]] | None = None,
     ) -> ProviderResponse:
+        ...
+
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk] | None:
         ...
 
 
@@ -167,6 +183,13 @@ class BaseIdeaDiagnosisProvider:
     ) -> ProviderResponse:
         raise NotImplementedError
 
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk] | None:
+        return None
+
 
 class DeterministicMockProvider(BaseIdeaDiagnosisProvider):
     def generate_idea_diagnosis(self, request: ProviderRequest, idea: str) -> ProviderResponse:
@@ -221,6 +244,13 @@ class DeterministicMockProvider(BaseIdeaDiagnosisProvider):
             cached=False,
             created_at=utc_now(),
         )
+
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk] | None:
+        return None
 
     def _mock_diagnosis(self, idea: str) -> Diagnosis:
         cleaned = " ".join(idea.strip().split())
@@ -350,6 +380,39 @@ class OpenAIResponsesProvider(BaseIdeaDiagnosisProvider):
             created_at=utc_now(),
         )
 
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk]:
+        api_key = self._api_key()
+        base_url = (self.config.base_url or "https://api.openai.com/v1").rstrip("/")
+        body = openai_responses_agent_body(
+            self.config,
+            request.messages,
+            tools or [],
+            prompt_cache_key=_openai_agent_prompt_cache_key(self.config, tools or []),
+        )
+        body["stream"] = True
+
+        with httpx.Client(timeout=120.0, trust_env=False) as client:
+            with client.stream(
+                "POST",
+                f"{base_url}/responses",
+                headers=_openai_headers(api_key),
+                json=body,
+            ) as response:
+                if response.status_code >= 400:
+                    raise ProviderError(
+                        f"OpenAI provider error {response.status_code}: {response.read().decode('utf-8', 'ignore')}"
+                    )
+                yield from _iterate_openai_responses_stream(
+                    response,
+                    request=request,
+                    provider=self.config.provider,
+                    model=self.config.model,
+                )
+
 
 class AnthropicMessagesProvider(BaseIdeaDiagnosisProvider):
     def generate_idea_diagnosis(self, request: ProviderRequest, idea: str) -> ProviderResponse:
@@ -458,6 +521,13 @@ class AnthropicMessagesProvider(BaseIdeaDiagnosisProvider):
             provider_request_id=response.headers.get("request-id") or payload.get("id"),
             created_at=utc_now(),
         )
+
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk] | None:
+        return None
 
 
 class OpenAICompatibleChatProvider(BaseIdeaDiagnosisProvider):
@@ -591,6 +661,43 @@ class OpenAICompatibleChatProvider(BaseIdeaDiagnosisProvider):
             created_at=utc_now(),
         )
 
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk]:
+        api_key = self._api_key()
+        base_url = (self.config.base_url or "http://127.0.0.1:8000/v1").rstrip("/")
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": request.messages,
+            "max_tokens": self.config.max_output_tokens,
+            "stream": True,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        if self.config.temperature is not None:
+            body["temperature"] = self.config.temperature
+
+        with httpx.Client(timeout=120.0, trust_env=False) as client:
+            with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                headers=_openai_headers(api_key),
+                json=body,
+            ) as response:
+                if response.status_code >= 400:
+                    raise ProviderError(
+                        f"OpenAI-compatible provider error {response.status_code}: {response.read().decode('utf-8', 'ignore')}"
+                    )
+                yield from _iterate_chat_completions_stream(
+                    response,
+                    request=request,
+                    provider=self.config.provider,
+                    model=self.config.model,
+                )
+
 
 class DeepSeekChatProvider(BaseIdeaDiagnosisProvider):
     """DeepSeek provider using the OpenAI-compatible /chat/completions API.
@@ -699,6 +806,43 @@ class DeepSeekChatProvider(BaseIdeaDiagnosisProvider):
             provider_request_id=response.headers.get("x-request-id") or payload.get("id"),
             created_at=utc_now(),
         )
+
+    def stream_agent_response(
+        self,
+        request: ProviderRequest,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[ProviderStreamChunk]:
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": request.messages,
+            "max_tokens": self.config.max_output_tokens,
+            "stream": True,
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        if self.config.temperature is not None:
+            body["temperature"] = self.config.temperature
+        _apply_deepseek_reasoning(body, self.config)
+
+        api_key = self._api_key()
+        base_url = (self.config.base_url or "https://api.deepseek.com").rstrip("/")
+        with httpx.Client(timeout=120.0, trust_env=False) as client:
+            with client.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                headers=_openai_headers(api_key),
+                json=body,
+            ) as response:
+                if response.status_code >= 400:
+                    error_body = response.read().decode("utf-8", "ignore")
+                    raise ProviderError(f"DeepSeek agent error {response.status_code}: {error_body}")
+                yield from _iterate_chat_completions_stream(
+                    response,
+                    request=request,
+                    provider=self.config.provider,
+                    model=self.config.model,
+                )
 
     def generate_thread_title(self, idea: str, diagnosis: Diagnosis) -> str:
         body: dict[str, Any] = {
@@ -1076,6 +1220,207 @@ def _payload_from_sse(text: str) -> dict[str, Any] | None:
     if completed is None and output_text_chunks:
         return {"output_text": "".join(output_text_chunks)}
     return completed or last_payload
+
+
+def _iter_sse_json_payloads(response: httpx.Response) -> Iterator[dict[str, Any]]:
+    for raw_line in response.iter_lines():
+        line = raw_line.decode("utf-8", "ignore") if isinstance(raw_line, bytes) else raw_line
+        line = line.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            yield payload
+
+
+def _iterate_openai_responses_stream(
+    response: httpx.Response,
+    *,
+    request: ProviderRequest,
+    provider: ProviderName,
+    model: str,
+) -> Iterator[ProviderStreamChunk]:
+    output_text_chunks: list[str] = []
+    completed_payload: dict[str, Any] | None = None
+    last_payload_id: str | None = None
+
+    for payload in _iter_sse_json_payloads(response):
+        if isinstance(payload.get("id"), str):
+            last_payload_id = str(payload["id"])
+        event_type = payload.get("type")
+        if event_type == "response.output_text.delta" and isinstance(payload.get("delta"), str):
+            delta = str(payload["delta"])
+            output_text_chunks.append(delta)
+            yield {"type": "content_delta", "delta": delta}
+            continue
+        if event_type == "response.output_text.done" and isinstance(payload.get("text"), str):
+            output_text_chunks = [str(payload["text"])]
+            continue
+        if event_type in {
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+        } and isinstance(payload.get("delta"), str):
+            yield {"type": "reasoning_delta", "reasoning_delta": str(payload["delta"])}
+            continue
+        if event_type == "response.completed" and isinstance(payload.get("response"), dict):
+            completed_payload = cast(dict[str, Any], payload["response"])
+
+    if completed_payload is None:
+        completed_payload = {"output_text": "".join(output_text_chunks)}
+    elif output_text_chunks and "output_text" not in completed_payload:
+        completed_payload = {**completed_payload, "output_text": "".join(output_text_chunks)}
+
+    tool_calls = _openai_response_tool_calls(completed_payload)
+    content = _openai_output_text_or_none(completed_payload)
+    usage = _normalize_openai_usage(completed_payload.get("usage", {}))
+    yield {
+        "type": "completed",
+        "response": ProviderResponse(
+            response_id=new_id("provider_resp"),
+            request_id=request.request_id,
+            provider=provider,
+            model=model,
+            output={
+                "content": content,
+                "tool_calls": tool_calls,
+                "finish_reason": "tool_calls" if tool_calls else completed_payload.get("status", "stop"),
+            },
+            usage=usage,
+            cached=_openai_cached(completed_payload.get("usage", {})),
+            provider_request_id=response.headers.get("x-request-id") or completed_payload.get("id") or last_payload_id,
+            created_at=utc_now(),
+        ),
+    }
+
+
+def _iterate_chat_completions_stream(
+    response: httpx.Response,
+    *,
+    request: ProviderRequest,
+    provider: ProviderName,
+    model: str,
+) -> Iterator[ProviderStreamChunk]:
+    content_chunks: list[str] = []
+    reasoning_chunks: list[str] = []
+    tool_buffers: dict[int, dict[str, str]] = {}
+    usage_payload: dict[str, Any] = {}
+    finish_reason = "stop"
+    provider_payload_id: str | None = None
+
+    for payload in _iter_sse_json_payloads(response):
+        if isinstance(payload.get("id"), str):
+            provider_payload_id = str(payload["id"])
+        if isinstance(payload.get("usage"), dict):
+            usage_payload = cast(dict[str, Any], payload["usage"])
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            if choice.get("finish_reason"):
+                finish_reason = str(choice["finish_reason"])
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            content_delta = delta.get("content")
+            if isinstance(content_delta, str) and content_delta:
+                content_chunks.append(content_delta)
+                yield {"type": "content_delta", "delta": content_delta}
+            reasoning_delta = delta.get("reasoning_content")
+            if isinstance(reasoning_delta, str) and reasoning_delta:
+                reasoning_chunks.append(reasoning_delta)
+                yield {"type": "reasoning_delta", "reasoning_delta": reasoning_delta}
+            _accumulate_chat_stream_tool_calls(tool_buffers, delta.get("tool_calls"))
+            if delta.get("tool_calls"):
+                yield {
+                    "type": "tool_call_delta",
+                    "tool_calls": _chat_stream_tool_calls(tool_buffers),
+                }
+
+    tool_calls = _chat_stream_tool_calls(tool_buffers)
+    output: dict[str, Any] = {
+        "content": "".join(content_chunks) or None,
+        "tool_calls": tool_calls,
+        "finish_reason": "tool_calls" if tool_calls else finish_reason,
+    }
+    if reasoning_chunks:
+        output["reasoning_content"] = "".join(reasoning_chunks)
+    usage = (
+        _normalize_deepseek_usage(usage_payload)
+        if provider == "deepseek"
+        else _normalize_openai_usage(usage_payload)
+    )
+    cached = (
+        _deepseek_context_cache_hit(usage_payload)
+        if provider == "deepseek"
+        else _openai_cached(usage_payload)
+    )
+    yield {
+        "type": "completed",
+        "response": ProviderResponse(
+            response_id=new_id("provider_resp"),
+            request_id=request.request_id,
+            provider=provider,
+            model=model,
+            output=output,
+            usage=usage,
+            cached=cached,
+            provider_request_id=response.headers.get("x-request-id") or provider_payload_id,
+            created_at=utc_now(),
+        ),
+    }
+
+
+def _accumulate_chat_stream_tool_calls(
+    tool_buffers: dict[int, dict[str, str]],
+    tool_call_deltas: Any,
+) -> None:
+    if not isinstance(tool_call_deltas, list):
+        return
+    for delta in tool_call_deltas:
+        if not isinstance(delta, dict):
+            continue
+        index_value = delta.get("index")
+        index = int(index_value) if isinstance(index_value, int) else len(tool_buffers)
+        buffer = tool_buffers.setdefault(index, {"call_id": "", "name": "", "arguments": ""})
+        if isinstance(delta.get("id"), str) and delta["id"]:
+            buffer["call_id"] = str(delta["id"])
+        function = delta.get("function")
+        if not isinstance(function, dict):
+            continue
+        if isinstance(function.get("name"), str) and function["name"]:
+            buffer["name"] += str(function["name"])
+        if isinstance(function.get("arguments"), str):
+            buffer["arguments"] += str(function["arguments"])
+
+
+def _chat_stream_tool_calls(tool_buffers: dict[int, dict[str, str]]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for index in sorted(tool_buffers):
+        buffer = tool_buffers[index]
+        name = buffer.get("name", "")
+        if not name:
+            continue
+        arguments_text = buffer.get("arguments", "")
+        try:
+            arguments = json.loads(arguments_text or "{}")
+        except JSONDecodeError:
+            arguments = {}
+        calls.append(
+            {
+                "call_id": buffer.get("call_id") or f"call_{index}",
+                "name": name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+            }
+        )
+    return calls
 
 
 def _unsupported_parameter(text: str) -> str | None:

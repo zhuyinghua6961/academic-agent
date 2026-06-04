@@ -234,7 +234,11 @@
           "type": "string"
         },
         "artifact_type": {
-          "const": "ResearchIdeaPlanDraft",
+          "enum": [
+            "ResearchIdeaPlanDraft",
+            "ResearchIdeaPlan",
+            "PaperSearchEvidence"
+          ],
           "title": "Artifact Type",
           "type": "string"
         },
@@ -302,7 +306,11 @@
               "type": "string"
             },
             "artifact_type": {
-              "const": "ResearchIdeaPlanDraft",
+              "enum": [
+                "ResearchIdeaPlanDraft",
+                "ResearchIdeaPlan",
+                "PaperSearchEvidence"
+              ],
               "title": "Artifact Type",
               "type": "string"
             },
@@ -378,6 +386,170 @@
       "title": "ArtifactReadResponse",
       "type": "object"
     },
+    "ConflictListResponse": {
+      "$defs": {
+        "ConflictRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "conflict_id": {
+              "title": "Conflict Id",
+              "type": "string"
+            },
+            "conflict_type": {
+              "enum": [
+                "review_decision_conflict",
+                "freeze_gate_conflict",
+                "stale_evidence_conflict"
+              ],
+              "title": "Conflict Type",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "record_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Record Refs",
+              "type": "array"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "open",
+              "enum": [
+                "open",
+                "resolved"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "conflict_type",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "ConflictRecord",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "conflicts": {
+          "items": {
+            "$ref": "#/$defs/ConflictRecord"
+          },
+          "title": "Conflicts",
+          "type": "array"
+        }
+      },
+      "title": "ConflictListResponse",
+      "type": "object"
+    },
+    "ConflictRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "conflict_id": {
+          "title": "Conflict Id",
+          "type": "string"
+        },
+        "conflict_type": {
+          "enum": [
+            "review_decision_conflict",
+            "freeze_gate_conflict",
+            "stale_evidence_conflict"
+          ],
+          "title": "Conflict Type",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "record_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Record Refs",
+          "type": "array"
+        },
+        "source_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "resolved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread Id"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conflict_id",
+        "conflict_type",
+        "summary",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ConflictRecord",
+      "type": "object"
+    },
     "ContextPacket": {
       "additionalProperties": false,
       "properties": {
@@ -442,6 +614,10 @@
     "ContextUsageResponse": {
       "additionalProperties": false,
       "properties": {
+        "artifact_source_count": {
+          "title": "Artifact Source Count",
+          "type": "integer"
+        },
         "chars_per_token": {
           "title": "Chars Per Token",
           "type": "number"
@@ -464,6 +640,10 @@
         },
         "context_window_tokens": {
           "title": "Context Window Tokens",
+          "type": "integer"
+        },
+        "estimated_artifact_tokens": {
+          "title": "Estimated Artifact Tokens",
           "type": "integer"
         },
         "estimated_context_tokens": {
@@ -543,6 +723,7 @@
         "compact_trigger_ratio",
         "max_history_tokens",
         "estimated_thread_tokens",
+        "estimated_artifact_tokens",
         "estimated_draft_tokens",
         "estimated_total_tokens",
         "estimated_context_tokens",
@@ -555,6 +736,7 @@
         "recent_message_count",
         "older_message_count",
         "important_message_count",
+        "artifact_source_count",
         "chars_per_token"
       ],
       "title": "ContextUsageResponse",
@@ -745,7 +927,11 @@
               "type": "string"
             },
             "artifact_type": {
-              "const": "ResearchIdeaPlanDraft",
+              "enum": [
+                "ResearchIdeaPlanDraft",
+                "ResearchIdeaPlan",
+                "PaperSearchEvidence"
+              ],
               "title": "Artifact Type",
               "type": "string"
             },
@@ -992,6 +1178,343 @@
       "title": "CreateIdeaPlanRunResponse",
       "type": "object"
     },
+    "CurrentIdeaPlanResponse": {
+      "$defs": {
+        "ArtifactMetadata": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "title": "Artifact Id",
+              "type": "string"
+            },
+            "artifact_type": {
+              "enum": [
+                "ResearchIdeaPlanDraft",
+                "ResearchIdeaPlan",
+                "PaperSearchEvidence"
+              ],
+              "title": "Artifact Type",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "schema_version": {
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "source_run_id": {
+              "title": "Source Run Id",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "frozen"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "trace_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Trace Refs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "artifact_id",
+            "artifact_type",
+            "status",
+            "title",
+            "path",
+            "metadata_path",
+            "schema_version",
+            "source_run_id",
+            "created_at"
+          ],
+          "title": "ArtifactMetadata",
+          "type": "object"
+        },
+        "Diagnosis": {
+          "additionalProperties": false,
+          "properties": {
+            "candidate_mechanism": {
+              "title": "Candidate Mechanism",
+              "type": "string"
+            },
+            "clarifying_questions": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Clarifying Questions",
+              "type": "array"
+            },
+            "evidence_needed": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Evidence Needed",
+              "type": "array"
+            },
+            "gap": {
+              "title": "Gap",
+              "type": "string"
+            },
+            "main_uncertainty": {
+              "title": "Main Uncertainty",
+              "type": "string"
+            },
+            "problem": {
+              "title": "Problem",
+              "type": "string"
+            }
+          },
+          "required": [
+            "problem",
+            "gap",
+            "candidate_mechanism",
+            "evidence_needed",
+            "main_uncertainty"
+          ],
+          "title": "Diagnosis",
+          "type": "object"
+        },
+        "ResearchIdeaPlan": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "title": "Artifact Id",
+              "type": "string"
+            },
+            "context_id": {
+              "title": "Context Id",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "diagnosis": {
+              "$ref": "#/$defs/Diagnosis"
+            },
+            "frozen_at": {
+              "title": "Frozen At",
+              "type": "string"
+            },
+            "markdown_path": {
+              "title": "Markdown Path",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "plan_id": {
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "source_draft_artifact_id": {
+              "title": "Source Draft Artifact Id",
+              "type": "string"
+            },
+            "source_run_id": {
+              "title": "Source Run Id",
+              "type": "string"
+            },
+            "status": {
+              "const": "frozen",
+              "title": "Status",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan_id",
+            "artifact_id",
+            "source_draft_artifact_id",
+            "source_run_id",
+            "title",
+            "diagnosis",
+            "context_id",
+            "markdown_path",
+            "metadata_path",
+            "status",
+            "frozen_at",
+            "created_at"
+          ],
+          "title": "ResearchIdeaPlan",
+          "type": "object"
+        },
+        "ResearchIdeaPlanDraft": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "title": "Artifact Id",
+              "type": "string"
+            },
+            "context_id": {
+              "title": "Context Id",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "diagnosis": {
+              "$ref": "#/$defs/Diagnosis"
+            },
+            "markdown_path": {
+              "title": "Markdown Path",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "source_run_id": {
+              "title": "Source Run Id",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "artifact_id",
+            "title",
+            "source_run_id",
+            "diagnosis",
+            "context_id",
+            "markdown_path",
+            "metadata_path",
+            "created_at"
+          ],
+          "title": "ResearchIdeaPlanDraft",
+          "type": "object"
+        },
+        "WorkflowThread": {
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "thread_id": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "thread_id",
+            "project_id",
+            "created_at"
+          ],
+          "title": "WorkflowThread",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResearchIdeaPlanDraft"
+            },
+            {
+              "$ref": "#/$defs/ResearchIdeaPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Draft"
+        },
+        "latest_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latest Run Id"
+        },
+        "latest_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latest Status"
+        },
+        "session_status": {
+          "title": "Session Status",
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/WorkflowThread"
+        }
+      },
+      "required": [
+        "thread",
+        "session_status"
+      ],
+      "title": "CurrentIdeaPlanResponse",
+      "type": "object"
+    },
     "Diagnosis": {
       "additionalProperties": false,
       "properties": {
@@ -1034,6 +1557,947 @@
         "main_uncertainty"
       ],
       "title": "Diagnosis",
+      "type": "object"
+    },
+    "FreezeIdeaPlanResponse": {
+      "$defs": {
+        "ArtifactMetadata": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "title": "Artifact Id",
+              "type": "string"
+            },
+            "artifact_type": {
+              "enum": [
+                "ResearchIdeaPlanDraft",
+                "ResearchIdeaPlan",
+                "PaperSearchEvidence"
+              ],
+              "title": "Artifact Type",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "schema_version": {
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "source_run_id": {
+              "title": "Source Run Id",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "frozen"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "trace_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Trace Refs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "artifact_id",
+            "artifact_type",
+            "status",
+            "title",
+            "path",
+            "metadata_path",
+            "schema_version",
+            "source_run_id",
+            "created_at"
+          ],
+          "title": "ArtifactMetadata",
+          "type": "object"
+        },
+        "Diagnosis": {
+          "additionalProperties": false,
+          "properties": {
+            "candidate_mechanism": {
+              "title": "Candidate Mechanism",
+              "type": "string"
+            },
+            "clarifying_questions": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Clarifying Questions",
+              "type": "array"
+            },
+            "evidence_needed": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Evidence Needed",
+              "type": "array"
+            },
+            "gap": {
+              "title": "Gap",
+              "type": "string"
+            },
+            "main_uncertainty": {
+              "title": "Main Uncertainty",
+              "type": "string"
+            },
+            "problem": {
+              "title": "Problem",
+              "type": "string"
+            }
+          },
+          "required": [
+            "problem",
+            "gap",
+            "candidate_mechanism",
+            "evidence_needed",
+            "main_uncertainty"
+          ],
+          "title": "Diagnosis",
+          "type": "object"
+        },
+        "ResearchIdeaPlan": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "title": "Artifact Id",
+              "type": "string"
+            },
+            "context_id": {
+              "title": "Context Id",
+              "type": "string"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "diagnosis": {
+              "$ref": "#/$defs/Diagnosis"
+            },
+            "frozen_at": {
+              "title": "Frozen At",
+              "type": "string"
+            },
+            "markdown_path": {
+              "title": "Markdown Path",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "plan_id": {
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "source_draft_artifact_id": {
+              "title": "Source Draft Artifact Id",
+              "type": "string"
+            },
+            "source_run_id": {
+              "title": "Source Run Id",
+              "type": "string"
+            },
+            "status": {
+              "const": "frozen",
+              "title": "Status",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "plan_id",
+            "artifact_id",
+            "source_draft_artifact_id",
+            "source_run_id",
+            "title",
+            "diagnosis",
+            "context_id",
+            "markdown_path",
+            "metadata_path",
+            "status",
+            "frozen_at",
+            "created_at"
+          ],
+          "title": "ResearchIdeaPlan",
+          "type": "object"
+        },
+        "WorkflowThread": {
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "thread_id": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "thread_id",
+            "project_id",
+            "created_at"
+          ],
+          "title": "WorkflowThread",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactMetadata"
+        },
+        "plan": {
+          "$ref": "#/$defs/ResearchIdeaPlan"
+        },
+        "thread": {
+          "$ref": "#/$defs/WorkflowThread"
+        }
+      },
+      "required": [
+        "thread",
+        "artifact",
+        "plan"
+      ],
+      "title": "FreezeIdeaPlanResponse",
+      "type": "object"
+    },
+    "MemoryMapResponse": {
+      "$defs": {
+        "MemoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Artifact Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "importance": {
+              "default": 3,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Importance",
+              "type": "integer"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "record_type": {
+              "enum": [
+                "current_plan",
+                "idea_review",
+                "paper_evidence",
+                "conversation_summary",
+                "stale_recheck"
+              ],
+              "title": "Record Type",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "active",
+              "enum": [
+                "active",
+                "stale",
+                "conflict"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_id",
+            "record_type",
+            "title",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        },
+        "ProjectMemoryMap": {
+          "additionalProperties": false,
+          "properties": {
+            "markdown_path": {
+              "title": "Markdown Path",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "record_count": {
+              "title": "Record Count",
+              "type": "integer"
+            },
+            "records": {
+              "items": {
+                "$ref": "#/$defs/MemoryRecord"
+              },
+              "title": "Records",
+              "type": "array"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "thread_count": {
+              "title": "Thread Count",
+              "type": "integer"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "project_id",
+            "markdown_path",
+            "metadata_path",
+            "updated_at",
+            "thread_count",
+            "record_count"
+          ],
+          "title": "ProjectMemoryMap",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "memory_map": {
+          "$ref": "#/$defs/ProjectMemoryMap"
+        }
+      },
+      "required": [
+        "memory_map",
+        "content"
+      ],
+      "title": "MemoryMapResponse",
+      "type": "object"
+    },
+    "MemoryRecheckResponse": {
+      "$defs": {
+        "MemoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Artifact Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "importance": {
+              "default": 3,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Importance",
+              "type": "integer"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "record_type": {
+              "enum": [
+                "current_plan",
+                "idea_review",
+                "paper_evidence",
+                "conversation_summary",
+                "stale_recheck"
+              ],
+              "title": "Record Type",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "active",
+              "enum": [
+                "active",
+                "stale",
+                "conflict"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_id",
+            "record_type",
+            "title",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        },
+        "ProjectMemoryMap": {
+          "additionalProperties": false,
+          "properties": {
+            "markdown_path": {
+              "title": "Markdown Path",
+              "type": "string"
+            },
+            "metadata_path": {
+              "title": "Metadata Path",
+              "type": "string"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "record_count": {
+              "title": "Record Count",
+              "type": "integer"
+            },
+            "records": {
+              "items": {
+                "$ref": "#/$defs/MemoryRecord"
+              },
+              "title": "Records",
+              "type": "array"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "thread_count": {
+              "title": "Thread Count",
+              "type": "integer"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "project_id",
+            "markdown_path",
+            "metadata_path",
+            "updated_at",
+            "thread_count",
+            "record_count"
+          ],
+          "title": "ProjectMemoryMap",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "conflict_count": {
+          "title": "Conflict Count",
+          "type": "integer"
+        },
+        "memory_map": {
+          "$ref": "#/$defs/ProjectMemoryMap"
+        },
+        "stale_count": {
+          "title": "Stale Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stale_count",
+        "conflict_count",
+        "memory_map"
+      ],
+      "title": "MemoryRecheckResponse",
+      "type": "object"
+    },
+    "MemoryRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "importance": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Importance",
+          "type": "integer"
+        },
+        "record_id": {
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "enum": [
+            "current_plan",
+            "idea_review",
+            "paper_evidence",
+            "conversation_summary",
+            "stale_recheck"
+          ],
+          "title": "Record Type",
+          "type": "string"
+        },
+        "source_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "stale",
+            "conflict"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread Id"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_id",
+        "record_type",
+        "title",
+        "summary",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "MemoryRecord",
+      "type": "object"
+    },
+    "MemorySearchResponse": {
+      "$defs": {
+        "MemoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Artifact Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "importance": {
+              "default": 3,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Importance",
+              "type": "integer"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "record_type": {
+              "enum": [
+                "current_plan",
+                "idea_review",
+                "paper_evidence",
+                "conversation_summary",
+                "stale_recheck"
+              ],
+              "title": "Record Type",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "active",
+              "enum": [
+                "active",
+                "stale",
+                "conflict"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_id",
+            "record_type",
+            "title",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        },
+        "MemorySearchResult": {
+          "additionalProperties": false,
+          "properties": {
+            "keyword_score": {
+              "title": "Keyword Score",
+              "type": "number"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/MemoryRecord"
+            },
+            "score": {
+              "title": "Score",
+              "type": "number"
+            },
+            "vector_score": {
+              "title": "Vector Score",
+              "type": "number"
+            }
+          },
+          "required": [
+            "record",
+            "score",
+            "vector_score",
+            "keyword_score",
+            "reason"
+          ],
+          "title": "MemorySearchResult",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/MemorySearchResult"
+          },
+          "title": "Results",
+          "type": "array"
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread Id"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "MemorySearchResponse",
+      "type": "object"
+    },
+    "MemorySearchResult": {
+      "$defs": {
+        "MemoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Artifact Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "importance": {
+              "default": 3,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Importance",
+              "type": "integer"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "record_type": {
+              "enum": [
+                "current_plan",
+                "idea_review",
+                "paper_evidence",
+                "conversation_summary",
+                "stale_recheck"
+              ],
+              "title": "Record Type",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "active",
+              "enum": [
+                "active",
+                "stale",
+                "conflict"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_id",
+            "record_type",
+            "title",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "keyword_score": {
+          "title": "Keyword Score",
+          "type": "number"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/MemoryRecord"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "vector_score": {
+          "title": "Vector Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "record",
+        "score",
+        "vector_score",
+        "keyword_score",
+        "reason"
+      ],
+      "title": "MemorySearchResult",
       "type": "object"
     },
     "ModeRun": {
@@ -1112,6 +2576,202 @@
       "title": "ModeRun",
       "type": "object"
     },
+    "PaperSearchEvidence": {
+      "$defs": {
+        "SearchResponse": {
+          "additionalProperties": false,
+          "properties": {
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error"
+            },
+            "query": {
+              "title": "Query",
+              "type": "string"
+            },
+            "results": {
+              "items": {
+                "$ref": "#/$defs/SearchResult"
+              },
+              "title": "Results",
+              "type": "array"
+            },
+            "retrieved_at": {
+              "title": "Retrieved At",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query",
+            "source",
+            "retrieved_at"
+          ],
+          "title": "SearchResponse",
+          "type": "object"
+        },
+        "SearchResult": {
+          "additionalProperties": false,
+          "properties": {
+            "authors": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Authors",
+              "type": "array"
+            },
+            "external_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "External Id"
+            },
+            "metadata": {
+              "additionalProperties": true,
+              "title": "Metadata",
+              "type": "object"
+            },
+            "pdf_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Pdf Url"
+            },
+            "published_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Published At"
+            },
+            "retrieved_at": {
+              "title": "Retrieved At",
+              "type": "string"
+            },
+            "snippet": {
+              "default": "",
+              "title": "Snippet",
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "arxiv",
+                "openalex",
+                "brave",
+                "tavily",
+                "serper",
+                "serpapi",
+                "duckduckgo"
+              ],
+              "title": "Source",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Updated At"
+            },
+            "url": {
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "title",
+            "url",
+            "retrieved_at"
+          ],
+          "title": "SearchResult",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "markdown_path": {
+          "title": "Markdown Path",
+          "type": "string"
+        },
+        "metadata_path": {
+          "title": "Metadata Path",
+          "type": "string"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "search_response": {
+          "$ref": "#/$defs/SearchResponse"
+        },
+        "source_run_id": {
+          "title": "Source Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "artifact_id",
+        "source_run_id",
+        "query",
+        "search_response",
+        "markdown_path",
+        "metadata_path",
+        "created_at"
+      ],
+      "title": "PaperSearchEvidence",
+      "type": "object"
+    },
     "PaperSearchRequest": {
       "additionalProperties": false,
       "properties": {
@@ -1177,6 +2837,150 @@
         }
       },
       "title": "ProjectInitRequest",
+      "type": "object"
+    },
+    "ProjectMemoryMap": {
+      "$defs": {
+        "MemoryRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Artifact Refs",
+              "type": "array"
+            },
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "importance": {
+              "default": 3,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Importance",
+              "type": "integer"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "record_type": {
+              "enum": [
+                "current_plan",
+                "idea_review",
+                "paper_evidence",
+                "conversation_summary",
+                "stale_recheck"
+              ],
+              "title": "Record Type",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "status": {
+              "default": "active",
+              "enum": [
+                "active",
+                "stale",
+                "conflict"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            },
+            "thread_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Thread Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "updated_at": {
+              "title": "Updated At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "record_id",
+            "record_type",
+            "title",
+            "summary",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "markdown_path": {
+          "title": "Markdown Path",
+          "type": "string"
+        },
+        "metadata_path": {
+          "title": "Metadata Path",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "record_count": {
+          "title": "Record Count",
+          "type": "integer"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/MemoryRecord"
+          },
+          "title": "Records",
+          "type": "array"
+        },
+        "source_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "thread_count": {
+          "title": "Thread Count",
+          "type": "integer"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "markdown_path",
+        "metadata_path",
+        "updated_at",
+        "thread_count",
+        "record_count"
+      ],
+      "title": "ProjectMemoryMap",
       "type": "object"
     },
     "ProjectStatus": {
@@ -1750,6 +3554,121 @@
       "title": "RenameThreadRequest",
       "type": "object"
     },
+    "ResearchIdeaPlan": {
+      "$defs": {
+        "Diagnosis": {
+          "additionalProperties": false,
+          "properties": {
+            "candidate_mechanism": {
+              "title": "Candidate Mechanism",
+              "type": "string"
+            },
+            "clarifying_questions": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Clarifying Questions",
+              "type": "array"
+            },
+            "evidence_needed": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Evidence Needed",
+              "type": "array"
+            },
+            "gap": {
+              "title": "Gap",
+              "type": "string"
+            },
+            "main_uncertainty": {
+              "title": "Main Uncertainty",
+              "type": "string"
+            },
+            "problem": {
+              "title": "Problem",
+              "type": "string"
+            }
+          },
+          "required": [
+            "problem",
+            "gap",
+            "candidate_mechanism",
+            "evidence_needed",
+            "main_uncertainty"
+          ],
+          "title": "Diagnosis",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "context_id": {
+          "title": "Context Id",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "diagnosis": {
+          "$ref": "#/$defs/Diagnosis"
+        },
+        "frozen_at": {
+          "title": "Frozen At",
+          "type": "string"
+        },
+        "markdown_path": {
+          "title": "Markdown Path",
+          "type": "string"
+        },
+        "metadata_path": {
+          "title": "Metadata Path",
+          "type": "string"
+        },
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "source_draft_artifact_id": {
+          "title": "Source Draft Artifact Id",
+          "type": "string"
+        },
+        "source_run_id": {
+          "title": "Source Run Id",
+          "type": "string"
+        },
+        "status": {
+          "const": "frozen",
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "artifact_id",
+        "source_draft_artifact_id",
+        "source_run_id",
+        "title",
+        "diagnosis",
+        "context_id",
+        "markdown_path",
+        "metadata_path",
+        "status",
+        "frozen_at",
+        "created_at"
+      ],
+      "title": "ResearchIdeaPlan",
+      "type": "object"
+    },
     "ResearchIdeaPlanDraft": {
       "$defs": {
         "Diagnosis": {
@@ -1842,6 +3761,115 @@
         "created_at"
       ],
       "title": "ResearchIdeaPlanDraft",
+      "type": "object"
+    },
+    "ReviewIdeaPlanRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "Reject",
+            "Revise",
+            "Advance"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "title": "ReviewIdeaPlanRequest",
+      "type": "object"
+    },
+    "ReviewIdeaPlanResponse": {
+      "$defs": {
+        "WorkflowThread": {
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "thread_id": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "thread_id",
+            "project_id",
+            "created_at"
+          ],
+          "title": "WorkflowThread",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "Reject",
+            "Revise",
+            "Advance"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "session_status": {
+          "title": "Session Status",
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/WorkflowThread"
+        }
+      },
+      "required": [
+        "thread",
+        "decision",
+        "session_status"
+      ],
+      "title": "ReviewIdeaPlanResponse",
       "type": "object"
     },
     "RunListResponse": {
@@ -1946,7 +3974,11 @@
               "type": "string"
             },
             "artifact_type": {
-              "const": "ResearchIdeaPlanDraft",
+              "enum": [
+                "ResearchIdeaPlanDraft",
+                "ResearchIdeaPlan",
+                "PaperSearchEvidence"
+              ],
               "title": "Artifact Type",
               "type": "string"
             },
@@ -2917,6 +4949,30 @@
               "title": "Created At",
               "type": "string"
             },
+            "latest_artifact_status": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latest Artifact Status"
+            },
+            "latest_artifact_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latest Artifact Type"
+            },
             "latest_run_id": {
               "anyOf": [
                 {
@@ -2960,6 +5016,18 @@
             "project_id": {
               "title": "Project Id",
               "type": "string"
+            },
+            "session_status": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Session Status"
             },
             "thread_id": {
               "title": "Thread Id",
@@ -3274,6 +5342,30 @@
           "title": "Created At",
           "type": "string"
         },
+        "latest_artifact_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latest Artifact Status"
+        },
+        "latest_artifact_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latest Artifact Type"
+        },
         "latest_run_id": {
           "anyOf": [
             {
@@ -3317,6 +5409,18 @@
         "project_id": {
           "title": "Project Id",
           "type": "string"
+        },
+        "session_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Status"
         },
         "thread_id": {
           "title": "Thread Id",

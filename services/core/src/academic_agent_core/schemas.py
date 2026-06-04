@@ -71,6 +71,9 @@ class ThreadSessionSummary(StrictModel):
     message_count: int
     latest_run_id: str | None = None
     latest_status: str | None = None
+    session_status: str | None = None
+    latest_artifact_type: str | None = None
+    latest_artifact_status: str | None = None
 
 
 class ThreadMessage(StrictModel):
@@ -205,9 +208,80 @@ class ConversationSummary(StrictModel):
     updated_at: str
 
 
+class MemoryRecord(StrictModel):
+    record_id: str
+    thread_id: str | None = None
+    record_type: Literal[
+        "current_plan",
+        "idea_review",
+        "paper_evidence",
+        "conversation_summary",
+        "stale_recheck",
+    ]
+    title: str
+    summary: str
+    source_refs: list[str] = Field(default_factory=list)
+    artifact_refs: list[str] = Field(default_factory=list)
+    status: Literal["active", "stale", "conflict"] = "active"
+    importance: int = Field(default=3, ge=1, le=5)
+    created_at: str
+    updated_at: str
+
+
+class ProjectMemoryMap(StrictModel):
+    project_id: str
+    markdown_path: str
+    metadata_path: str
+    updated_at: str
+    thread_count: int
+    record_count: int
+    source_refs: list[str] = Field(default_factory=list)
+    records: list[MemoryRecord] = Field(default_factory=list)
+
+
+class MemorySearchResult(StrictModel):
+    record: MemoryRecord
+    score: float
+    vector_score: float
+    keyword_score: float
+    reason: str
+
+
+class MemorySearchResponse(StrictModel):
+    query: str
+    thread_id: str | None = None
+    results: list[MemorySearchResult] = Field(default_factory=list)
+
+
+class ConflictRecord(StrictModel):
+    conflict_id: str
+    thread_id: str | None = None
+    conflict_type: Literal[
+        "review_decision_conflict",
+        "freeze_gate_conflict",
+        "stale_evidence_conflict",
+    ]
+    status: Literal["open", "resolved"] = "open"
+    summary: str
+    record_refs: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class ConflictListResponse(StrictModel):
+    conflicts: list[ConflictRecord] = Field(default_factory=list)
+
+
+class MemoryRecheckResponse(StrictModel):
+    stale_count: int
+    conflict_count: int
+    memory_map: ProjectMemoryMap
+
+
 class ArtifactMetadata(StrictModel):
     artifact_id: str
-    artifact_type: Literal["ResearchIdeaPlanDraft"]
+    artifact_type: Literal["ResearchIdeaPlanDraft", "ResearchIdeaPlan", "PaperSearchEvidence"]
     status: Literal["draft", "frozen"]
     title: str
     path: str
@@ -224,6 +298,32 @@ class ResearchIdeaPlanDraft(StrictModel):
     source_run_id: str
     diagnosis: Diagnosis
     context_id: str
+    markdown_path: str
+    metadata_path: str
+    created_at: str
+
+
+class ResearchIdeaPlan(StrictModel):
+    plan_id: str
+    artifact_id: str
+    source_draft_artifact_id: str
+    source_run_id: str
+    title: str
+    diagnosis: Diagnosis
+    context_id: str
+    markdown_path: str
+    metadata_path: str
+    status: Literal["frozen"]
+    frozen_at: str
+    created_at: str
+
+
+class PaperSearchEvidence(StrictModel):
+    evidence_id: str
+    artifact_id: str
+    source_run_id: str
+    query: str
+    search_response: SearchResponse
     markdown_path: str
     metadata_path: str
     created_at: str
@@ -369,6 +469,33 @@ class RunResultResponse(StrictModel):
     messages: list[ThreadMessage] = Field(default_factory=list)
 
 
+class CurrentIdeaPlanResponse(StrictModel):
+    thread: WorkflowThread
+    artifact: ArtifactMetadata | None = None
+    draft: ResearchIdeaPlanDraft | ResearchIdeaPlan | None = None
+    session_status: str
+    latest_run_id: str | None = None
+    latest_status: str | None = None
+
+
+class FreezeIdeaPlanResponse(StrictModel):
+    thread: WorkflowThread
+    artifact: ArtifactMetadata
+    plan: ResearchIdeaPlan
+
+
+class ReviewIdeaPlanRequest(StrictModel):
+    decision: Literal["Reject", "Revise", "Advance"]
+    notes: str | None = None
+
+
+class ReviewIdeaPlanResponse(StrictModel):
+    thread: WorkflowThread
+    decision: Literal["Reject", "Revise", "Advance"]
+    session_status: str
+    notes: str | None = None
+
+
 class ThreadMessagesResponse(StrictModel):
     thread: WorkflowThread
     messages: list[ThreadMessage] = Field(default_factory=list)
@@ -383,6 +510,7 @@ class ContextUsageResponse(StrictModel):
     compact_trigger_ratio: float
     max_history_tokens: int
     estimated_thread_tokens: int
+    estimated_artifact_tokens: int
     estimated_draft_tokens: int
     estimated_total_tokens: int
     estimated_context_tokens: int
@@ -395,6 +523,7 @@ class ContextUsageResponse(StrictModel):
     recent_message_count: int
     older_message_count: int
     important_message_count: int
+    artifact_source_count: int
     chars_per_token: float
 
 
@@ -410,6 +539,11 @@ class ArtifactReadResponse(StrictModel):
 class TraceReadResponse(StrictModel):
     trace: TraceRecord
     payload: JsonObject
+
+
+class MemoryMapResponse(StrictModel):
+    memory_map: ProjectMemoryMap
+    content: str
 
 
 SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
@@ -431,8 +565,17 @@ SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     SearchProvidersResponse,
     ContextPacket,
     ConversationSummary,
+    MemoryRecord,
+    ProjectMemoryMap,
+    MemorySearchResult,
+    MemorySearchResponse,
+    ConflictRecord,
+    ConflictListResponse,
+    MemoryRecheckResponse,
     ArtifactMetadata,
     ResearchIdeaPlanDraft,
+    ResearchIdeaPlan,
+    PaperSearchEvidence,
     SSEEvent,
     TraceRecord,
     ProviderRequest,
@@ -451,9 +594,14 @@ SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     StartIdeaPlanRunResponse,
     RunListResponse,
     RunResultResponse,
+    CurrentIdeaPlanResponse,
+    FreezeIdeaPlanResponse,
+    ReviewIdeaPlanRequest,
+    ReviewIdeaPlanResponse,
     ThreadMessagesResponse,
     ContextUsageResponse,
     ThreadListResponse,
     ArtifactReadResponse,
     TraceReadResponse,
+    MemoryMapResponse,
 )

@@ -11,16 +11,22 @@ from fastapi.responses import StreamingResponse
 
 from .config import AgentConfig
 from .graph import IdeaPlanRunner, build_context_usage
-from .harness import ArtifactManager
+from .harness import ArtifactManager, MemoryManager
 from .search import create_default_search_engine
 from .schemas import (
     AppCacheClearResponse,
     AppCacheListResponse,
     ArtifactReadResponse,
     ContinueIdeaPlanThreadRequest,
+    ConflictListResponse,
     ContextUsageResponse,
     CoreCapabilitiesResponse,
     CreateIdeaPlanRunRequest,
+    CurrentIdeaPlanResponse,
+    FreezeIdeaPlanResponse,
+    MemoryMapResponse,
+    MemoryRecheckResponse,
+    MemorySearchResponse,
     RunListResponse,
     RunResultResponse,
     ModeRun,
@@ -29,6 +35,8 @@ from .schemas import (
     ProjectInitRequest,
     ProjectStatus,
     RenameThreadRequest,
+    ReviewIdeaPlanRequest,
+    ReviewIdeaPlanResponse,
     SearchProviderStatus,
     SearchProvidersResponse,
     StartIdeaPlanRunResponse,
@@ -50,6 +58,15 @@ CORE_CAPABILITIES = [
     "react_agent_loop",
     "paper_search_tool",
     "context_usage",
+    "idea_plan_current_artifact",
+    "idea_plan_freeze",
+    "idea_plan_review_gate",
+    "provider_streaming",
+    "project_memory_map",
+    "memory_records",
+    "memory_hybrid_search",
+    "memory_conflict_records",
+    "memory_stale_recheck",
 ]
 
 
@@ -90,6 +107,58 @@ def create_app(project_root: Path | str | None = None) -> FastAPI:
     async def project_context_usage(draft: str = "") -> ContextUsageResponse:
         workspace().init()
         return build_context_usage(workspace(), draft_input=draft)
+
+    @app.get("/memory/map", response_model=MemoryMapResponse)
+    async def read_memory_map() -> MemoryMapResponse:
+        manager = MemoryManager(workspace())
+        memory_map = manager.read_project_memory_map()
+        return MemoryMapResponse(
+            memory_map=memory_map,
+            content=manager.read_project_memory_markdown(),
+        )
+
+    @app.post("/memory/rebuild", response_model=MemoryMapResponse)
+    async def rebuild_memory_map() -> MemoryMapResponse:
+        manager = MemoryManager(workspace())
+        memory_map = manager.rebuild_project_memory_map()
+        return MemoryMapResponse(
+            memory_map=memory_map,
+            content=manager.read_project_memory_markdown(),
+        )
+
+    @app.get("/memory/search", response_model=MemorySearchResponse)
+    async def search_memory(
+        q: str,
+        thread_id: str | None = None,
+        limit: int = 8,
+    ) -> MemorySearchResponse:
+        return MemoryManager(workspace()).search_memory(q, thread_id=thread_id, limit=limit)
+
+    @app.get("/memory/conflicts", response_model=ConflictListResponse)
+    async def list_memory_conflicts(
+        thread_id: str | None = None,
+        status: str | None = "open",
+        limit: int = 100,
+    ) -> ConflictListResponse:
+        return ConflictListResponse(
+            conflicts=workspace().list_conflict_records(
+                thread_id=thread_id,
+                status=status,
+                limit=limit,
+            )
+        )
+
+    @app.post("/memory/recheck", response_model=MemoryRecheckResponse)
+    async def recheck_memory() -> MemoryRecheckResponse:
+        manager = MemoryManager(workspace())
+        stale_count = manager.recheck_stale_records()
+        conflicts = manager.detect_conflicts()
+        memory_map = manager.rebuild_project_memory_map()
+        return MemoryRecheckResponse(
+            stale_count=stale_count,
+            conflict_count=len(conflicts),
+            memory_map=memory_map,
+        )
 
     @app.get("/cache", response_model=AppCacheListResponse)
     async def list_cache(limit: int = 50) -> AppCacheListResponse:
@@ -201,6 +270,125 @@ def create_app(project_root: Path | str | None = None) -> FastAPI:
         if not messages:
             raise HTTPException(status_code=404, detail=f"Unknown thread: {thread_id}")
         return ThreadMessagesResponse(thread=thread, messages=messages)
+
+    @app.get("/threads/{thread_id}/plan", response_model=CurrentIdeaPlanResponse)
+    async def read_thread_plan(thread_id: str) -> CurrentIdeaPlanResponse:
+        try:
+            thread = workspace().get_thread(thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        artifact = workspace().latest_plan_artifact_for_thread(thread_id)
+        if artifact is None:
+            return CurrentIdeaPlanResponse(
+                thread=thread,
+                artifact=None,
+                draft=None,
+                session_status="needs literature",
+            )
+        manager = ArtifactManager(workspace())
+        if artifact.artifact_type == "ResearchIdeaPlan":
+            _, plan = manager.read_research_idea_plan(artifact.artifact_id)
+            return CurrentIdeaPlanResponse(
+                thread=thread,
+                artifact=artifact,
+                draft=plan,
+                session_status=workspace().thread_session_status(thread_id),
+                latest_run_id=artifact.source_run_id,
+                latest_status=workspace().get_run(artifact.source_run_id).status,
+            )
+        _, draft = manager.read_research_idea_draft(artifact.artifact_id)
+        return CurrentIdeaPlanResponse(
+            thread=thread,
+            artifact=artifact,
+            draft=draft,
+            session_status=workspace().thread_session_status(thread_id),
+            latest_run_id=artifact.source_run_id,
+            latest_status=workspace().get_run(artifact.source_run_id).status,
+        )
+
+    @app.post("/threads/{thread_id}/freeze", response_model=FreezeIdeaPlanResponse)
+    async def freeze_thread_plan(thread_id: str) -> FreezeIdeaPlanResponse:
+        try:
+            thread = workspace().get_thread(thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        artifact = workspace().latest_plan_artifact_for_thread(thread_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"No idea plan draft for thread: {thread_id}")
+        manager = ArtifactManager(workspace())
+        if artifact.artifact_type == "ResearchIdeaPlan":
+            _, plan = manager.read_research_idea_plan(artifact.artifact_id)
+            return FreezeIdeaPlanResponse(thread=thread, artifact=artifact, plan=plan)
+        source_metadata, draft = manager.read_research_idea_draft(artifact.artifact_id)
+        frozen_artifact, plan = manager.freeze_research_idea_plan(source_metadata, draft)
+        workspace().add_event(
+            draft.source_run_id,
+            "plan.frozen",
+            {
+                "artifact_id": frozen_artifact.artifact_id,
+                "source_draft_artifact_id": source_metadata.artifact_id,
+                "thread_id": thread_id,
+            },
+        )
+        memory_map = MemoryManager(workspace()).rebuild_project_memory_map()
+        workspace().add_event(
+            draft.source_run_id,
+            "memory.map.updated",
+            {
+                "path": memory_map.markdown_path,
+                "metadata_path": memory_map.metadata_path,
+                "record_count": memory_map.record_count,
+                "thread_count": memory_map.thread_count,
+            },
+        )
+        return FreezeIdeaPlanResponse(thread=thread, artifact=frozen_artifact, plan=plan)
+
+    @app.post("/threads/{thread_id}/review", response_model=ReviewIdeaPlanResponse)
+    async def review_thread_plan(
+        thread_id: str,
+        payload: ReviewIdeaPlanRequest,
+    ) -> ReviewIdeaPlanResponse:
+        try:
+            thread = workspace().get_thread(thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        artifact = workspace().latest_plan_artifact_for_thread(thread_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"No idea plan draft for thread: {thread_id}")
+        workspace().record_idea_review(
+            thread_id=thread_id,
+            artifact_id=artifact.artifact_id,
+            run_id=artifact.source_run_id,
+            decision=payload.decision,
+            notes=payload.notes,
+        )
+        workspace().add_event(
+            artifact.source_run_id,
+            "idea.review.recorded",
+            {
+                "thread_id": thread_id,
+                "artifact_id": artifact.artifact_id,
+                "decision": payload.decision,
+                "notes": payload.notes,
+            },
+        )
+        memory_map = MemoryManager(workspace()).rebuild_project_memory_map()
+        workspace().add_event(
+            artifact.source_run_id,
+            "memory.map.updated",
+            {
+                "path": memory_map.markdown_path,
+                "metadata_path": memory_map.metadata_path,
+                "record_count": memory_map.record_count,
+                "thread_count": memory_map.thread_count,
+            },
+        )
+        return ReviewIdeaPlanResponse(
+            thread=thread,
+            decision=payload.decision,
+            session_status=workspace().thread_session_status(thread_id),
+            notes=payload.notes,
+        )
 
     @app.get("/threads/{thread_id}/context-usage", response_model=ContextUsageResponse)
     async def thread_context_usage(thread_id: str, draft: str = "") -> ContextUsageResponse:
