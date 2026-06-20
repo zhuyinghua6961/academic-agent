@@ -527,6 +527,19 @@ class ContextUsageResponse(StrictModel):
     chars_per_token: float
 
 
+class ArtifactContextResponse(StrictModel):
+    prompt_text: str
+    source_refs: list[str] = Field(default_factory=list)
+    estimated_tokens: int
+    token_budget: int
+
+
+class ThreadContextResponse(StrictModel):
+    thread: WorkflowThread
+    artifact_context: ArtifactContextResponse
+    content: str
+
+
 class ThreadListResponse(StrictModel):
     threads: list[ThreadSessionSummary] = Field(default_factory=list)
 
@@ -600,6 +613,8 @@ SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     ReviewIdeaPlanResponse,
     ThreadMessagesResponse,
     ContextUsageResponse,
+    ArtifactContextResponse,
+    ThreadContextResponse,
     ThreadListResponse,
     ArtifactReadResponse,
     TraceReadResponse,

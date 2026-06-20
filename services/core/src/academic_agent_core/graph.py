@@ -1927,6 +1927,24 @@ def build_context_usage(
     )
 
 
+def build_thread_artifact_context(
+    workspace: ProjectWorkspace,
+    thread_id: str,
+    draft_input: str = "",
+) -> ArtifactContextPacket:
+    config = AgentConfig.load(workspace.project_root)
+    profile = config.profile("planner")
+    return _build_artifact_context(
+        workspace,
+        ArtifactManager(workspace),
+        thread_id,
+        config.context_compaction,
+        profile.model,
+        profile.max_output_tokens,
+        latest_input=draft_input,
+    )
+
+
 def _select_recent_messages(
     messages: list[ThreadMessage],
     max_recent_messages: int,

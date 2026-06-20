@@ -1429,6 +1429,20 @@ async def test_api_project_run_sse_artifact_and_trace(tmp_path: Path) -> None:
         assert artifact_response.status_code == 200
         assert "## Evidence Needed" in artifact_response.json()["content"]
 
+        thread_artifact_response = await client.get(f"/threads/{thread_id}/artifact")
+        assert thread_artifact_response.status_code == 200
+        thread_artifact_payload = thread_artifact_response.json()
+        assert thread_artifact_payload["metadata"]["artifact_id"] == artifact_id
+        assert "## Evidence Needed" in thread_artifact_payload["content"]
+
+        thread_context_response = await client.get(f"/threads/{thread_id}/context")
+        assert thread_context_response.status_code == 200
+        thread_context_payload = thread_context_response.json()
+        assert thread_context_payload["thread"]["thread_id"] == thread_id
+        assert thread_context_payload["artifact_context"]["source_refs"]
+        assert f"artifact:{artifact_id}" in thread_context_payload["artifact_context"]["source_refs"]
+        assert "## Current Research Idea Artifact" in thread_context_payload["content"]
+
         plan_response = await client.get(f"/threads/{thread_id}/plan")
         assert plan_response.status_code == 200
         plan_payload = plan_response.json()
@@ -1638,6 +1652,29 @@ async def test_api_thread_list_excludes_empty_threads(tmp_path: Path) -> None:
         assert session["updated_at"]
         assert session["latest_run_id"] == run_id
         assert session["latest_status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Mock provider tests
+# ---------------------------------------------------------------------------
+
+
+def test_mock_provider_uses_domain_neutral_clarifying_questions_for_unrelated_ideas() -> None:
+    config = ProviderProfileConfig(
+        profile="planner",
+        provider="mock",
+        model="mock-idea-diagnoser-v0",
+    )
+    provider = create_idea_diagnosis_provider(config, env={})
+
+    request = provider.build_request("图像生成模型，文生图", "ctx_test")
+    response = provider.generate_idea_diagnosis(request, "图像生成模型，文生图")
+    questions = " ".join(response.output["diagnosis"]["clarifying_questions"])
+
+    assert "无人机" not in questions
+    assert "SLAM" not in questions
+    assert "建筑图纸" not in questions
+    assert "图像生成模型" in questions or "文生图" in questions
 
 
 # ---------------------------------------------------------------------------

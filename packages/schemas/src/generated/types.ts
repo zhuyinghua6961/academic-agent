@@ -478,6 +478,19 @@ export interface ContextUsageResponse {
   chars_per_token: number;
 }
 
+export interface ArtifactContextResponse {
+  prompt_text: string;
+  source_refs?: string[];
+  estimated_tokens: number;
+  token_budget: number;
+}
+
+export interface ThreadContextResponse {
+  thread: WorkflowThread;
+  artifact_context: ArtifactContextResponse;
+  content: string;
+}
+
 export interface ThreadListResponse {
   threads?: ThreadSessionSummary[];
 }

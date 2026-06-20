@@ -4,6 +4,7 @@ import {Box, Text, render, useApp, useInput} from "ink";
 import type {
   AppCacheClearResponse,
   AppCacheListResponse,
+  ArtifactReadResponse,
   ContextUsageResponse,
   CurrentIdeaPlanResponse,
   FreezeIdeaPlanResponse,
@@ -19,6 +20,7 @@ import type {
   SSEEvent,
   StartIdeaPlanRunResponse,
   ReviewIdeaPlanResponse,
+  ThreadContextResponse,
 } from "@academic-agent/schemas";
 
 type Args = {
@@ -36,6 +38,8 @@ type SlashCommand =
   | "resume"
   | "rename"
   | "plan"
+  | "artifact"
+  | "context"
   | "freeze"
   | "review"
   | "cache"
@@ -303,6 +307,8 @@ const SLASH_COMMANDS: SlashCommand[] = [
   "resume",
   "rename",
   "plan",
+  "artifact",
+  "context",
   "freeze",
   "review",
   "cache",
@@ -449,6 +455,29 @@ const currentPlanText = (plan: CurrentIdeaPlanResponse): string => {
     `Main uncertainty: ${diagnosis.main_uncertainty}`,
   ].join("\n");
 };
+
+const artifactText = (artifact: ArtifactReadResponse): string =>
+  [
+    `Artifact: ${artifact.metadata.path}`,
+    `Type: ${artifact.metadata.artifact_type}`,
+    `Status: ${artifact.metadata.status}`,
+    "",
+    artifact.content.trim() || "Artifact content is empty.",
+  ].join("\n");
+
+const contextText = (response: ThreadContextResponse): string =>
+  (() => {
+    const sourceRefs = response.artifact_context.source_refs ?? [];
+    return [
+      `Thread: ${response.thread.name ?? response.thread.thread_id}`,
+      `Estimated tokens: ${formatTokenCount(
+        response.artifact_context.estimated_tokens,
+      )} / ${formatTokenCount(response.artifact_context.token_budget)}`,
+      `Source refs: ${sourceRefs.join(", ") || "None"}`,
+      "",
+      response.content.trim() || "No artifact-first context has been built for this thread yet.",
+    ].join("\n");
+  })();
 
 const frozenPlanText = (result: FreezeIdeaPlanResponse): string =>
   [
@@ -851,6 +880,68 @@ const App = ({args}: {args: Args}) => {
       setState(threadId ? "completed" : "input");
     }
   }, [args.coreUrl, nextTranscriptEntryId, threadId]);
+
+  const showCurrentArtifact = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread to inspect");
+      setState("input");
+      return;
+    }
+    setError(null);
+    setState("loading");
+    try {
+      const artifact = await getJson<ArtifactReadResponse>(
+        `${args.coreUrl}/threads/${threadId}/artifact`,
+      );
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Current Artifact",
+          content: artifactText(artifact),
+        },
+      ]);
+      setState("completed");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError(message);
+      setState(threadId ? "completed" : "input");
+    }
+  }, [args.coreUrl, nextTranscriptEntryId, threadId]);
+
+  const showThreadContext = useCallback(
+    async (draft = "") => {
+      if (!threadId) {
+        setError("No active thread to inspect");
+        setState("input");
+        return;
+      }
+      setError(null);
+      setState("loading");
+      try {
+        const query = draft.trim() ? `?draft=${encodeURIComponent(draft.trim())}` : "";
+        const context = await getJson<ThreadContextResponse>(
+          `${args.coreUrl}/threads/${threadId}/context${query}`,
+        );
+        setTranscript((current) => [
+          ...current,
+          {
+            id: nextTranscriptEntryId(),
+            kind: "info",
+            title: "Artifact Context",
+            content: contextText(context),
+          },
+        ]);
+        setState("completed");
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setError(message);
+        setState(threadId ? "completed" : "input");
+      }
+    },
+    [args.coreUrl, nextTranscriptEntryId, threadId],
+  );
 
   const freezeCurrentPlan = useCallback(async () => {
     if (!threadId) {
@@ -1298,6 +1389,10 @@ const App = ({args}: {args: Args}) => {
         await renameCurrentThread(command.value);
       } else if (command.command === "plan") {
         await showCurrentPlan();
+      } else if (command.command === "artifact") {
+        await showCurrentArtifact();
+      } else if (command.command === "context") {
+        await showThreadContext(command.value);
       } else if (command.command === "freeze") {
         await freezeCurrentPlan();
       } else if (command.command === "review") {
@@ -1324,7 +1419,9 @@ const App = ({args}: {args: Args}) => {
       resetToNewThread,
       resumeThreadByName,
       runIdeaPlan,
+      showCurrentArtifact,
       showCurrentPlan,
+      showThreadContext,
       showResumeList,
     ],
   );
@@ -1768,9 +1865,25 @@ const ResumeSessionRow = ({
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
+  const commands = [
+    "/new",
+    "/new IDEA",
+    "/resume",
+    "/resume NAME",
+    "/rename",
+    "/rename NAME",
+    "/plan",
+    "/artifact",
+    "/context",
+    "/freeze",
+    "/review Reject|Revise|Advance",
+    "/cache",
+    "/clear-cache",
+    "/quit",
+  ].join(", ");
   process.stdout.write(
     "Usage: academic-agent [resume [NAME]|--resume [NAME]] [--core-url URL] [--idea TEXT] [--once]\n" +
-      "Commands: /new, /new IDEA, /resume, /resume NAME, /rename, /rename NAME, /plan, /freeze, /review Reject|Revise|Advance, /cache, /clear-cache, /quit\n" +
+      `Commands: ${commands}\n` +
       "Keys: Esc interrupts the current run.\n",
   );
   process.exit(0);

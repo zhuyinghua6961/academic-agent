@@ -164,6 +164,18 @@ def live_providers_enabled(env: Mapping[str, str] | None = None) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def mock_provider_allowed(env: Mapping[str, str]) -> bool:
+    value = env.get("ACADEMIC_AGENT_ALLOW_MOCK", "")
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+class ConfigurationRequiredError(RuntimeError):
+    code = "configuration_required"
+
+    def __init__(self, message: str = "Provider configuration required") -> None:
+        super().__init__(message)
+
+
 class AgentConfig:
     def __init__(
         self,
@@ -205,13 +217,15 @@ class AgentConfig:
                 if isinstance(data.get("memory"), dict):
                     raw_memory = _deep_merge(raw_memory, data["memory"])
 
-        profiles = _default_profiles()
+        profiles = _default_profiles(include_planner=False)
         for name, payload in raw_profiles.items():
             if name in PROFILE_NAMES:
-                current = profiles[name].model_dump(mode="json")
-                current.update(payload)
-                current["profile"] = name
-                profiles[name] = ProviderProfileConfig.model_validate(current)
+                profile = _profile_from_payload(name, payload)
+                if profile.provider != "mock" or mock_provider_allowed(source_env):
+                    profiles[name] = profile
+
+        if "planner" not in profiles and mock_provider_allowed(source_env):
+            profiles["planner"] = _mock_profile("planner")
 
         _apply_env_overrides(profiles, source_env)
         return cls(
@@ -224,13 +238,36 @@ class AgentConfig:
         )
 
     def profile(self, name: ProviderProfileName) -> ProviderProfileConfig:
-        return self.profiles[name]
+        try:
+            return self.profiles[name]
+        except KeyError as exc:
+            raise ConfigurationRequiredError(
+                f"configuration required for provider profile: {name}"
+            ) from exc
+
+    def planner_or_none(self) -> ProviderProfileConfig | None:
+        return self.profiles.get("planner")
+
+    def setup_state(self) -> str:
+        planner = self.planner_or_none()
+        if planner is None:
+            return "unconfigured"
+        if planner.provider == "mock":
+            return "configured" if mock_provider_allowed(self.env) else "unconfigured"
+        has_key = bool(planner.api_key_env and self.env.get(planner.api_key_env))
+        if not has_key or not live_providers_enabled(self.env):
+            return "invalid"
+        if planner.provider == "openai_compatible" and not planner.base_url:
+            return "invalid"
+        return "configured"
 
     def statuses(self) -> list[ProviderProfileStatus]:
         live_enabled = live_providers_enabled(self.env)
         statuses: list[ProviderProfileStatus] = []
         for profile_name in PROFILE_NAMES:
-            config = self.profiles[profile_name]
+            config = self.profiles.get(profile_name)
+            if config is None:
+                continue
             has_api_key = bool(config.api_key_env and self.env.get(config.api_key_env))
             statuses.append(
                 ProviderProfileStatus(
@@ -252,7 +289,7 @@ class AgentConfig:
 def render_default_project_config() -> str:
     return (
         "# Academic Agent project config\n"
-        "# v0.2 defaults to mock providers. Secrets must stay in env vars.\n\n"
+        "# Configure the planner through the first-run setup. Secrets stay in env files.\n\n"
         "[runtime]\n"
         'core_host = "127.0.0.1"\n'
         "core_port = 8765\n\n"
@@ -284,11 +321,6 @@ def render_default_project_config() -> str:
         "paper_evidence_ttl_days = 30\n"
         "stale_recheck_enabled = true\n"
         "conflict_detection_enabled = true\n\n"
-        "[providers.planner]\n"
-        'provider = "mock"\n'
-        'model = "mock-idea-diagnoser-v0"\n'
-        "max_output_tokens = 900\n"
-        "temperature = 0.2\n\n"
         "# Example OpenAI planner profile:\n"
         "# [providers.planner]\n"
         '# provider = "openai"\n'
@@ -344,26 +376,57 @@ def _config_paths(project_root: Path, env: dict[str, str]) -> list[Path]:
 
 
 def _load_env(project_root: Path, env: dict[str, str] | None) -> dict[str, str]:
-    merged: dict[str, str] = dict(env if env is not None else os.environ)
-    for env_path in (project_root / ".env", project_root / ".academic-agent" / ".env"):
+    process_env = dict(env if env is not None else os.environ)
+    merged: dict[str, str] = {}
+    home = process_env.get("HOME")
+    env_paths = []
+    if home:
+        env_paths.append(Path(home) / ".academic-agent" / ".env")
+    env_paths.extend((project_root / ".env", project_root / ".academic-agent" / ".env"))
+    for env_path in env_paths:
         if env_path.exists():
             for key, value in dotenv_values(env_path).items():
-                if value is not None and key not in merged:
+                if value is not None:
                     merged[key] = value
+    merged.update(process_env)
     return merged
 
 
-def _default_profiles() -> dict[ProviderProfileName, ProviderProfileConfig]:
+def _mock_profile(profile: ProviderProfileName) -> ProviderProfileConfig:
+    return ProviderProfileConfig(
+        profile=profile,
+        provider="mock",
+        model=DEFAULT_MODELS["mock"],
+        api_key_env=None,
+        base_url=None,
+    )
+
+
+def _default_profiles(
+    *, include_planner: bool = True
+) -> dict[ProviderProfileName, ProviderProfileConfig]:
     return {
-        profile: ProviderProfileConfig(
-            profile=profile,
-            provider="mock",
-            model=DEFAULT_MODELS["mock"],
-            api_key_env=None,
-            base_url=None,
-        )
+        profile: _mock_profile(profile)
         for profile in PROFILE_NAMES
+        if include_planner or profile != "planner"
     }
+
+
+def _profile_from_payload(
+    profile_name: ProviderProfileName,
+    payload: dict[str, Any],
+) -> ProviderProfileConfig:
+    provider = payload.get("provider", "mock")
+    current = {
+        "profile": profile_name,
+        "provider": provider,
+        "model": DEFAULT_MODELS.get(provider, DEFAULT_MODELS["mock"]),
+        "api_key_env": DEFAULT_API_KEY_ENVS.get(provider),
+        "base_url": DEFAULT_BASE_URLS.get(provider),
+    }
+    current.update(payload)
+    current["profile"] = profile_name
+    return ProviderProfileConfig.model_validate(current)
 
 
 def _default_search_providers() -> dict[SearchSource, SearchProviderConfig]:
@@ -507,7 +570,14 @@ def _apply_env_overrides(
     if not provider and not model and not base_url and not api_key_env and not reasoning_effort and not reasoning_summary:
         return
 
-    planner = profiles["planner"].model_dump(mode="json")
+    if "planner" in profiles:
+        planner = profiles["planner"].model_dump(mode="json")
+    elif provider:
+        planner = _profile_from_payload("planner", {"provider": provider}).model_dump(
+            mode="json"
+        )
+    else:
+        return
     if provider:
         planner["provider"] = provider
         if provider in DEFAULT_MODELS:

@@ -3,8 +3,14 @@ import {spawn} from "node:child_process";
 import {existsSync, mkdirSync, openSync, readFileSync} from "node:fs";
 import {basename, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {
+  configPaths as resolveConfigPaths,
+  coreSpawnPlan,
+  resolveProjectRoot,
+} from "./academic-agent-runtime.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const projectRoot = resolveProjectRoot({cwd: process.cwd(), env: process.env});
 const args = process.argv.slice(2);
 const runtimeConfig = readRuntimeConfig();
 const coreUrl = coreUrlFromArgs(args, runtimeConfig);
@@ -120,32 +126,25 @@ async function ensureLocalCore(urlText, {requireManagedPort}) {
     process.exit(1);
   }
 
-  const logPath = `${repoRoot}/.academic-agent/core-${port}.log`;
-  mkdirSync(`${repoRoot}/.academic-agent`, {recursive: true});
-  const logFd = openSync(logPath, "a");
-  const core = spawn(
-    "conda",
-    [
-      "run",
-      "-n",
-      "academic-agent",
-      "env",
-      "PYTHONNOUSERSITE=1",
-      "uvicorn",
-      "academic_agent_core.api:app",
-      "--app-dir",
-      "services/core/src",
-      "--host",
-      url.hostname,
-      "--port",
-      port,
-    ],
-    {
-      cwd: repoRoot,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-    },
+  const condaEnv = process.env.ACADEMIC_AGENT_CONDA_ENV || runtimeConfig.condaEnv || "academic-agent";
+  const plan = coreSpawnPlan({
+    repoRoot,
+    projectRoot,
+    condaEnv,
+    host: url.hostname,
+    port,
+  });
+  mkdirSync(resolve(projectRoot, ".academic-agent"), {recursive: true});
+  const logFd = openSync(plan.logPath, "a");
+  process.stderr.write(
+    `Starting Academic Agent core with conda env: ${condaEnv}\n` +
+      `Project root: ${projectRoot}\n`,
   );
+  const core = spawn(plan.command, plan.args, {
+    cwd: plan.cwd,
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+  });
 
   const ready = await waitForCompatibleCore(urlText, 10_000);
   if (!ready) {
@@ -338,15 +337,12 @@ function readRuntimeConfig() {
 }
 
 function configPaths() {
-  const paths = [];
-  if (process.env.HOME) {
-    paths.push(resolve(process.env.HOME, ".academic-agent", "config.toml"));
-  }
-  paths.push(resolve(repoRoot, ".academic-agent", "config.toml"));
-  if (process.env.ACADEMIC_AGENT_CONFIG) {
-    paths.push(resolve(process.env.ACADEMIC_AGENT_CONFIG));
-  }
-  return paths;
+  return resolveConfigPaths({
+    home: process.env.HOME,
+    projectRoot,
+    repoRoot,
+    env: process.env,
+  });
 }
 
 function parseRuntimeSection(text) {
@@ -377,6 +373,8 @@ function parseRuntimeSection(text) {
       runtime.coreHost = value;
     } else if (key === "core_port") {
       runtime.corePort = String(value);
+    } else if (key === "conda_env") {
+      runtime.condaEnv = String(value);
     }
   }
   return runtime;

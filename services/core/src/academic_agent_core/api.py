@@ -10,12 +10,13 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .config import AgentConfig
-from .graph import IdeaPlanRunner, build_context_usage
+from .graph import IdeaPlanRunner, build_context_usage, build_thread_artifact_context
 from .harness import ArtifactManager, MemoryManager
 from .search import create_default_search_engine
 from .schemas import (
     AppCacheClearResponse,
     AppCacheListResponse,
+    ArtifactContextResponse,
     ArtifactReadResponse,
     ContinueIdeaPlanThreadRequest,
     ConflictListResponse,
@@ -42,6 +43,7 @@ from .schemas import (
     StartIdeaPlanRunResponse,
     ThreadListResponse,
     ThreadMessagesResponse,
+    ThreadContextResponse,
     WorkflowThread,
     TraceReadResponse,
     SearchResponse,
@@ -59,6 +61,8 @@ CORE_CAPABILITIES = [
     "paper_search_tool",
     "context_usage",
     "idea_plan_current_artifact",
+    "thread_artifact_read",
+    "thread_context_inspection",
     "idea_plan_freeze",
     "idea_plan_review_gate",
     "provider_streaming",
@@ -304,6 +308,49 @@ def create_app(project_root: Path | str | None = None) -> FastAPI:
             session_status=workspace().thread_session_status(thread_id),
             latest_run_id=artifact.source_run_id,
             latest_status=workspace().get_run(artifact.source_run_id).status,
+        )
+
+    @app.get("/threads/{thread_id}/artifact", response_model=ArtifactReadResponse)
+    async def read_thread_artifact(thread_id: str) -> ArtifactReadResponse:
+        try:
+            workspace().get_thread(thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        artifact = workspace().latest_plan_artifact_for_thread(thread_id)
+        if artifact is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No idea plan artifact for thread: {thread_id}",
+            )
+        try:
+            metadata, content = ArtifactManager(workspace()).read_artifact_content(
+                artifact.artifact_id
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return ArtifactReadResponse(metadata=metadata, content=content)
+
+    @app.get("/threads/{thread_id}/context", response_model=ThreadContextResponse)
+    async def read_thread_context(thread_id: str, draft: str = "") -> ThreadContextResponse:
+        try:
+            thread = workspace().get_thread(thread_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        artifact_context = build_thread_artifact_context(
+            workspace(),
+            thread_id,
+            draft_input=draft,
+        )
+        context = ArtifactContextResponse(
+            prompt_text=artifact_context["prompt_text"],
+            source_refs=artifact_context["source_refs"],
+            estimated_tokens=artifact_context["estimated_tokens"],
+            token_budget=artifact_context["token_budget"],
+        )
+        return ThreadContextResponse(
+            thread=thread,
+            artifact_context=context,
+            content=context.prompt_text,
         )
 
     @app.post("/threads/{thread_id}/freeze", response_model=FreezeIdeaPlanResponse)

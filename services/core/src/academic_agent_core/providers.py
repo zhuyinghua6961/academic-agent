@@ -23,7 +23,7 @@ from .schemas import (
 )
 
 
-PROMPT_VERSION = "idea-plan-diagnosis-v0.3"
+PROMPT_VERSION = "idea-plan-diagnosis-v0.4"
 APP_USER_AGENT = "academic-agent/0.1.0"
 
 
@@ -274,9 +274,9 @@ class DeterministicMockProvider(BaseIdeaDiagnosisProvider):
                 "以及能否通过强 baseline 与 ablation 排除工程拼装解释。"
             ),
             clarifying_questions=[
-                "目标任务的输入是什么：参考图、楼层/列号、坐标、自然语言描述，还是人工点击？",
-                "你希望核心创新落在算法机制、数据/benchmark、理论分析，还是人机协作流程？",
-                "可用数据和实验资源是什么：无人机视频、位姿/SLAM、建筑图纸、标注预算分别有多少？",
+                f"围绕“{cleaned}”，目标任务、输入输出和使用场景分别是什么？",
+                "你希望核心创新落在模型机制、数据/benchmark、评估方法，还是人机交互流程？",
+                "可用数据、算力、标注预算和强 baseline 分别是什么？",
             ],
         )
 

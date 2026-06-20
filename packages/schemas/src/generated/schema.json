@@ -226,6 +226,37 @@
       "title": "AppCacheSummaryRecord",
       "type": "object"
     },
+    "ArtifactContextResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "estimated_tokens": {
+          "title": "Estimated Tokens",
+          "type": "integer"
+        },
+        "prompt_text": {
+          "title": "Prompt Text",
+          "type": "string"
+        },
+        "source_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "token_budget": {
+          "title": "Token Budget",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "prompt_text",
+        "estimated_tokens",
+        "token_budget"
+      ],
+      "title": "ArtifactContextResponse",
+      "type": "object"
+    },
     "ArtifactMetadata": {
       "additionalProperties": false,
       "properties": {
@@ -4938,6 +4969,97 @@
         "events_url"
       ],
       "title": "StartIdeaPlanRunResponse",
+      "type": "object"
+    },
+    "ThreadContextResponse": {
+      "$defs": {
+        "ArtifactContextResponse": {
+          "additionalProperties": false,
+          "properties": {
+            "estimated_tokens": {
+              "title": "Estimated Tokens",
+              "type": "integer"
+            },
+            "prompt_text": {
+              "title": "Prompt Text",
+              "type": "string"
+            },
+            "source_refs": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Refs",
+              "type": "array"
+            },
+            "token_budget": {
+              "title": "Token Budget",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "prompt_text",
+            "estimated_tokens",
+            "token_budget"
+          ],
+          "title": "ArtifactContextResponse",
+          "type": "object"
+        },
+        "WorkflowThread": {
+          "additionalProperties": false,
+          "properties": {
+            "created_at": {
+              "title": "Created At",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "project_id": {
+              "title": "Project Id",
+              "type": "string"
+            },
+            "thread_id": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "thread_id",
+            "project_id",
+            "created_at"
+          ],
+          "title": "WorkflowThread",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "artifact_context": {
+          "$ref": "#/$defs/ArtifactContextResponse"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/WorkflowThread"
+        }
+      },
+      "required": [
+        "thread",
+        "artifact_context",
+        "content"
+      ],
+      "title": "ThreadContextResponse",
       "type": "object"
     },
     "ThreadListResponse": {
