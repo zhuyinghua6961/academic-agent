@@ -15,7 +15,7 @@ import com.academicagent.platform.identity.entity.SearchSetting;
 import com.academicagent.platform.identity.model.DecryptedSearchCredential;
 import com.academicagent.platform.identity.model.SearchSettingsView;
 import com.academicagent.platform.identity.model.SearchSourceMasked;
-import com.academicagent.platform.identity.repository.SearchSettingRepository;
+import com.academicagent.platform.identity.mapper.SearchSettingMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,21 +25,21 @@ public class SearchSettingsService {
     private static final List<String> KNOWN_SOURCES =
             List.of("arxiv", "openalex", "brave", "tavily", "serper", "serpapi", "duckduckgo");
 
-    private final SearchSettingRepository searchSettingRepository;
+    private final SearchSettingMapper searchSettingMapper;
     private final AesEncryptionService encryptionService;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     public SearchSettingsService(
-            SearchSettingRepository searchSettingRepository, AesEncryptionService encryptionService) {
-        this.searchSettingRepository = searchSettingRepository;
+            SearchSettingMapper searchSettingMapper, AesEncryptionService encryptionService) {
+        this.searchSettingMapper = searchSettingMapper;
         this.encryptionService = encryptionService;
     }
 
     @Transactional(readOnly = true)
     public SearchSettingsView getMasked(String userId) {
-        List<SearchSetting> stored = searchSettingRepository.findByUserId(userId);
+        List<SearchSetting> stored = searchSettingMapper.findByUserId(userId);
         List<SearchSourceMasked> sources = new ArrayList<>();
         for (String source : KNOWN_SOURCES) {
             SearchSetting setting = stored.stream()
@@ -62,25 +62,31 @@ public class SearchSettingsService {
     @Transactional
     public SearchSettingsView upsert(String userId, String source, String apiKey) {
         Instant now = Instant.now();
-        SearchSetting setting = searchSettingRepository
-                .findByUserIdAndSource(userId, source)
-                .orElseGet(() -> {
-                    SearchSetting created = new SearchSetting();
-                    created.setSettingId(UUID.randomUUID().toString());
-                    created.setUserId(userId);
-                    created.setSource(source);
-                    created.setCreatedAt(now);
-                    return created;
-                });
+        var existing = searchSettingMapper.findByUserIdAndSource(userId, source);
+        SearchSetting setting;
+        boolean isNew = existing.isEmpty();
+        if (isNew) {
+            setting = new SearchSetting();
+            setting.setSettingId(UUID.randomUUID().toString());
+            setting.setUserId(userId);
+            setting.setSource(source);
+            setting.setCreatedAt(now);
+        } else {
+            setting = existing.get();
+        }
         setting.setApiKeyEncrypted(encryptionService.encrypt(apiKey));
         setting.setUpdatedAt(now);
-        searchSettingRepository.save(setting);
+        if (isNew) {
+            searchSettingMapper.insert(setting);
+        } else {
+            searchSettingMapper.updateById(setting);
+        }
         return getMasked(userId);
     }
 
     @Transactional(readOnly = true)
     public List<DecryptedSearchCredential> getDecrypted(String userId) {
-        return searchSettingRepository.findByUserId(userId).stream()
+        return searchSettingMapper.findByUserId(userId).stream()
                 .map(setting -> new DecryptedSearchCredential(
                         setting.getSource(), encryptionService.decrypt(setting.getApiKeyEncrypted())))
                 .toList();

@@ -9,7 +9,7 @@ import com.academicagent.platform.research.entity.Run;
 import com.academicagent.platform.research.entity.Thread;
 import com.academicagent.platform.research.kafka.RunExecuteCommand;
 import com.academicagent.platform.research.kafka.RunExecutePublisher;
-import com.academicagent.platform.research.repository.RunRepository;
+import com.academicagent.platform.research.mapper.RunMapper;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,22 +18,31 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RunService {
 
-    private final RunRepository runRepository;
+    private final RunMapper runMapper;
     private final ThreadService threadService;
     private final RunExecutePublisher runExecutePublisher;
 
     public RunService(
-            RunRepository runRepository, ThreadService threadService, RunExecutePublisher runExecutePublisher) {
-        this.runRepository = runRepository;
+            RunMapper runMapper, ThreadService threadService, RunExecutePublisher runExecutePublisher) {
+        this.runMapper = runMapper;
         this.threadService = threadService;
         this.runExecutePublisher = runExecutePublisher;
     }
 
     @Transactional(readOnly = true)
     public Run get(String userId, String runId) {
-        return runRepository
+        return runMapper
                 .findByRunIdAndUserId(runId, userId)
                 .orElseThrow(() -> new ApiException("Run not found", HttpStatus.NOT_FOUND, "run_not_found"));
+    }
+
+    @Transactional(readOnly = true)
+    public Run requireById(String runId) {
+        Run run = runMapper.selectById(runId);
+        if (run == null) {
+            throw new ApiException("Run not found", HttpStatus.NOT_FOUND, "run_not_found");
+        }
+        return run;
     }
 
     @Transactional
@@ -47,7 +56,7 @@ public class RunService {
         run.setIdea(idea);
         run.setCreatedAt(now);
         run.setUpdatedAt(now);
-        runRepository.save(run);
+        runMapper.insert(run);
 
         String traceId = MDC.get(TraceIdFilter.MDC_TRACE_ID);
         RunExecuteCommand command = new RunExecuteCommand(
@@ -71,17 +80,20 @@ public class RunService {
         }
         run.setStatus("cancelled");
         run.setUpdatedAt(Instant.now());
-        return runRepository.save(run);
+        runMapper.updateById(run);
+        return run;
     }
 
     @Transactional
     public void applyCompletion(String runId, String status, String artifactId, String error) {
-        runRepository.findById(runId).ifPresent(run -> {
-            run.setStatus(status);
-            run.setArtifactId(artifactId);
-            run.setError(error);
-            run.setUpdatedAt(Instant.now());
-            runRepository.save(run);
-        });
+        Run run = runMapper.selectById(runId);
+        if (run == null) {
+            return;
+        }
+        run.setStatus(status);
+        run.setArtifactId(artifactId);
+        run.setError(error);
+        run.setUpdatedAt(Instant.now());
+        runMapper.updateById(run);
     }
 }

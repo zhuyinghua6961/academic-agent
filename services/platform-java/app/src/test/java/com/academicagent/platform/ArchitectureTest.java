@@ -40,4 +40,13 @@ public class ArchitectureTest {
             .should()
             .dependOnClassesThat()
             .resideInAPackage("com.academicagent.platform.api..");
+
+    @ArchTest
+    static final ArchRule identity_and_research_do_not_use_jpa = noClasses()
+            .that()
+            .resideInAnyPackage(
+                    "com.academicagent.platform.identity..", "com.academicagent.platform.research..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage("org.springframework.data.jpa..", "jakarta.persistence..");
 }

@@ -2,36 +2,23 @@ package com.academicagent.platform.identity.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(
-        schema = "identity",
-        name = "search_settings",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "source"}))
+@TableName(value = "search_settings", schema = "identity")
 public class SearchSetting {
 
-    @Id
-    @Column(name = "setting_id", length = 36)
+    @TableId("setting_id")
     private String settingId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(nullable = false, length = 64)
     private String source;
 
-    @Column(name = "api_key_encrypted", nullable = false, columnDefinition = "TEXT")
     private String apiKeyEncrypted;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     public String getSettingId() {

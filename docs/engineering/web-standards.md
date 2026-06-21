@@ -42,6 +42,12 @@ agent-runtime     → agent-core + WorkspacePort + Kafka
 packages/*        → no imports from apps/*
 ```
 
+### Persistence (platform-java)
+
+- **Schema**: Flyway migrations in `services/platform-java/app/src/main/resources/db/migration/` (single source of truth for table DDL).
+- **ORM**: MyBatis-Plus (`BaseMapper` + XML for complex queries); no Spring Data JPA.
+- **Mappers**: `identity.mapper` / `research.mapper`; scanned from `MybatisPlusConfig` in the `app` module.
+
 ## Enforcement
 
 - Java: ArchUnit (`services/platform-java/app/src/test/java/.../ArchitectureTest.java`)

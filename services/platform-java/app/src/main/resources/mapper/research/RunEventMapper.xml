@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.academicagent.platform.research.mapper.RunEventMapper">
+
+    <resultMap id="RunEventResultMap" type="com.academicagent.platform.research.entity.RunEvent">
+        <id column="event_id" property="eventId"/>
+        <result column="run_id" property="runId"/>
+        <result column="event_type" property="eventType"/>
+        <result column="ordinal" property="ordinal"/>
+        <result column="payload" property="payload"
+                typeHandler="com.academicagent.platform.common.PostgresJsonbTypeHandler"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <select id="selectByRunIdOrderByOrdinalAsc" resultMap="RunEventResultMap">
+        SELECT event_id, run_id, event_type, ordinal, payload, created_at
+        FROM research.run_events
+        WHERE run_id = #{runId}
+        ORDER BY ordinal ASC
+    </select>
+
+    <select id="selectAfterOrdinal" resultMap="RunEventResultMap">
+        SELECT event_id, run_id, event_type, ordinal, payload, created_at
+        FROM research.run_events
+        WHERE run_id = #{runId}
+          AND ordinal &gt; #{afterOrdinal}
+        ORDER BY ordinal ASC
+    </select>
+
+    <select id="selectByRunIdAndEventId" resultMap="RunEventResultMap">
+        SELECT event_id, run_id, event_type, ordinal, payload, created_at
+        FROM research.run_events
+        WHERE run_id = #{runId}
+          AND event_id = #{eventId}
+    </select>
+</mapper>

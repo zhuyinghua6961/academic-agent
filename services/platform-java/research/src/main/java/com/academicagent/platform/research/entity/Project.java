@@ -2,26 +2,19 @@ package com.academicagent.platform.research.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "research", name = "projects")
+@TableName(value = "projects", schema = "research")
 public class Project {
 
-    @Id
-    @Column(name = "project_id", length = 36)
+    @TableId("project_id")
     private String projectId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(nullable = false)
     private String name;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public String getProjectId() {

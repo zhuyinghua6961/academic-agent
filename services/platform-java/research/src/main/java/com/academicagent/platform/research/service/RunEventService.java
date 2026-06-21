@@ -5,17 +5,17 @@ import java.util.List;
 import java.util.UUID;
 
 import com.academicagent.platform.research.entity.RunEvent;
-import com.academicagent.platform.research.repository.RunEventRepository;
+import com.academicagent.platform.research.mapper.RunEventMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class RunEventService {
 
-    private final RunEventRepository runEventRepository;
+    private final RunEventMapper runEventMapper;
 
-    public RunEventService(RunEventRepository runEventRepository) {
-        this.runEventRepository = runEventRepository;
+    public RunEventService(RunEventMapper runEventMapper) {
+        this.runEventMapper = runEventMapper;
     }
 
     @Transactional
@@ -27,18 +27,19 @@ public class RunEventService {
         event.setOrdinal(ordinal);
         event.setPayload(payloadJson);
         event.setCreatedAt(Instant.now());
-        return runEventRepository.save(event);
+        runEventMapper.insert(event);
+        return event;
     }
 
     @Transactional(readOnly = true)
     public List<RunEvent> listFrom(String runId, String lastEventId) {
         if (lastEventId == null || lastEventId.isBlank()) {
-            return runEventRepository.findByRunIdOrderByOrdinalAsc(runId);
+            return runEventMapper.findByRunIdOrderByOrdinalAsc(runId);
         }
-        List<RunEvent> anchor = runEventRepository.findByRunIdAndEventId(runId, lastEventId);
+        List<RunEvent> anchor = runEventMapper.findByRunIdAndEventId(runId, lastEventId);
         if (anchor.isEmpty()) {
-            return runEventRepository.findByRunIdOrderByOrdinalAsc(runId);
+            return runEventMapper.findByRunIdOrderByOrdinalAsc(runId);
         }
-        return runEventRepository.findAfterOrdinal(runId, anchor.get(0).getOrdinal());
+        return runEventMapper.findAfterOrdinal(runId, anchor.get(0).getOrdinal());
     }
 }

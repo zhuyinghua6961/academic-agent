@@ -12,9 +12,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.academicagent.platform.research.entity.PaperEntry;
 import com.academicagent.platform.research.entity.PlanArtifact;
 import com.academicagent.platform.research.entity.PlanReview;
-import com.academicagent.platform.research.repository.PaperEntryRepository;
-import com.academicagent.platform.research.repository.PlanArtifactRepository;
-import com.academicagent.platform.research.repository.PlanReviewRepository;
+import com.academicagent.platform.research.mapper.PaperEntryMapper;
+import com.academicagent.platform.research.mapper.PlanArtifactMapper;
+import com.academicagent.platform.research.mapper.PlanReviewMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,21 +22,21 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PlanService {
 
-    private final PlanArtifactRepository planArtifactRepository;
-    private final PlanReviewRepository planReviewRepository;
-    private final PaperEntryRepository paperEntryRepository;
+    private final PlanArtifactMapper planArtifactMapper;
+    private final PlanReviewMapper planReviewMapper;
+    private final PaperEntryMapper paperEntryMapper;
     private final ThreadService threadService;
     private final ObjectMapper objectMapper;
 
     public PlanService(
-            PlanArtifactRepository planArtifactRepository,
-            PlanReviewRepository planReviewRepository,
-            PaperEntryRepository paperEntryRepository,
+            PlanArtifactMapper planArtifactMapper,
+            PlanReviewMapper planReviewMapper,
+            PaperEntryMapper paperEntryMapper,
             ThreadService threadService,
             ObjectMapper objectMapper) {
-        this.planArtifactRepository = planArtifactRepository;
-        this.planReviewRepository = planReviewRepository;
-        this.paperEntryRepository = paperEntryRepository;
+        this.planArtifactMapper = planArtifactMapper;
+        this.planReviewMapper = planReviewMapper;
+        this.paperEntryMapper = paperEntryMapper;
         this.threadService = threadService;
         this.objectMapper = objectMapper;
     }
@@ -44,7 +44,7 @@ public class PlanService {
     @Transactional(readOnly = true)
     public PlanArtifact getCurrentPlan(String userId, String threadId) {
         threadService.requireOwned(userId, threadId);
-        return planArtifactRepository
+        return planArtifactMapper
                 .findFirstByThreadIdAndUserIdOrderByUpdatedAtDesc(threadId, userId)
                 .orElseThrow(() -> new ApiException("Plan not found", HttpStatus.NOT_FOUND, "plan_not_found"));
     }
@@ -60,7 +60,8 @@ public class PlanService {
         review.setFeedback(feedback);
         review.setStatus("submitted");
         review.setCreatedAt(Instant.now());
-        return planReviewRepository.save(review);
+        planReviewMapper.insert(review);
+        return review;
     }
 
     @Transactional
@@ -69,13 +70,14 @@ public class PlanService {
         artifact.setFrozen(true);
         artifact.setStatus("frozen");
         artifact.setUpdatedAt(Instant.now());
-        return planArtifactRepository.save(artifact);
+        planArtifactMapper.updateById(artifact);
+        return artifact;
     }
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listPapers(String userId, String threadId) {
         threadService.requireOwned(userId, threadId);
-        return paperEntryRepository.findByThreadIdAndUserIdOrderByCreatedAtAsc(threadId, userId).stream()
+        return paperEntryMapper.findByThreadIdAndUserIdOrderByCreatedAtAsc(threadId, userId).stream()
                 .map(this::toPaperMap)
                 .toList();
     }
@@ -83,21 +85,24 @@ public class PlanService {
     @Transactional
     public void upsertArtifactFromRun(String threadId, String userId, String artifactId, String bodyJson) {
         Instant now = Instant.now();
-        PlanArtifact artifact = planArtifactRepository
-                .findById(artifactId)
-                .orElseGet(() -> {
-                    PlanArtifact created = new PlanArtifact();
-                    created.setArtifactId(artifactId);
-                    created.setThreadId(threadId);
-                    created.setUserId(userId);
-                    created.setArtifactType("ResearchIdeaPlan");
-                    created.setCreatedAt(now);
-                    return created;
-                });
+        PlanArtifact artifact = planArtifactMapper.selectById(artifactId);
+        boolean isNew = artifact == null;
+        if (isNew) {
+            artifact = new PlanArtifact();
+            artifact.setArtifactId(artifactId);
+            artifact.setThreadId(threadId);
+            artifact.setUserId(userId);
+            artifact.setArtifactType("ResearchIdeaPlan");
+            artifact.setCreatedAt(now);
+        }
         artifact.setBody(bodyJson);
         artifact.setStatus("active");
         artifact.setUpdatedAt(now);
-        planArtifactRepository.save(artifact);
+        if (isNew) {
+            planArtifactMapper.insert(artifact);
+        } else {
+            planArtifactMapper.updateById(artifact);
+        }
     }
 
     @Transactional
@@ -109,7 +114,7 @@ public class PlanService {
             entry.setUserId(userId);
             entry.setMetadata(objectMapper.writeValueAsString(metadata));
             entry.setCreatedAt(Instant.now());
-            paperEntryRepository.save(entry);
+            paperEntryMapper.insert(entry);
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("failed to serialize paper metadata", ex);
         }

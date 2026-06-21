@@ -5,25 +5,25 @@ import java.util.List;
 import java.util.UUID;
 
 import com.academicagent.platform.research.entity.Message;
-import com.academicagent.platform.research.repository.MessageRepository;
+import com.academicagent.platform.research.mapper.MessageMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class MessageService {
 
-    private final MessageRepository messageRepository;
+    private final MessageMapper messageMapper;
     private final ThreadService threadService;
 
-    public MessageService(MessageRepository messageRepository, ThreadService threadService) {
-        this.messageRepository = messageRepository;
+    public MessageService(MessageMapper messageMapper, ThreadService threadService) {
+        this.messageMapper = messageMapper;
         this.threadService = threadService;
     }
 
     @Transactional(readOnly = true)
     public List<Message> list(String userId, String threadId) {
         threadService.requireOwned(userId, threadId);
-        return messageRepository.findByThreadIdOrderByCreatedAtAsc(threadId);
+        return messageMapper.findByThreadIdOrderByCreatedAtAsc(threadId);
     }
 
     @Transactional
@@ -35,6 +35,7 @@ public class MessageService {
         message.setRole("user");
         message.setContent(content);
         message.setCreatedAt(Instant.now());
-        return messageRepository.save(message);
+        messageMapper.insert(message);
+        return message;
     }
 }

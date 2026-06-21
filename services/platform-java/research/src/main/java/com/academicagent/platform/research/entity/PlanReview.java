@@ -2,35 +2,25 @@ package com.academicagent.platform.research.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "agent", name = "plan_reviews")
+@TableName(value = "plan_reviews", schema = "agent")
 public class PlanReview {
 
-    @Id
-    @Column(name = "review_id", length = 36)
+    @TableId("review_id")
     private String reviewId;
 
-    @Column(name = "thread_id", nullable = false, length = 36)
     private String threadId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(nullable = false, length = 16)
     private String decision;
 
-    @Column(columnDefinition = "TEXT")
     private String feedback;
 
-    @Column(nullable = false, length = 32)
     private String status;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public String getReviewId() {

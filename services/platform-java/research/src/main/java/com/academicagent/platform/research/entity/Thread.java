@@ -2,41 +2,29 @@ package com.academicagent.platform.research.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "research", name = "threads")
+@TableName(value = "threads", schema = "research")
 public class Thread {
 
-    @Id
-    @Column(name = "thread_id", length = 36)
+    @TableId("thread_id")
     private String threadId;
 
-    @Column(name = "project_id", nullable = false, length = 36)
     private String projectId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(length = 255)
     private String name;
 
-    @Column(name = "current_mode", nullable = false, length = 32)
     private String currentMode;
 
-    @Column(name = "lifecycle_state", nullable = false, length = 64)
     private String lifecycleState;
 
-    @Column(name = "idea_version")
     private Integer ideaVersion;
 
-    @Column(name = "impact_level", length = 32)
     private String impactLevel;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public String getThreadId() {

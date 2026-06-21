@@ -16,7 +16,7 @@ import com.academicagent.platform.identity.entity.UserCredential;
 import com.academicagent.platform.identity.model.DecryptedProviderCredential;
 import com.academicagent.platform.identity.model.ProviderProfileMasked;
 import com.academicagent.platform.identity.model.ProviderSettingsView;
-import com.academicagent.platform.identity.repository.UserCredentialRepository;
+import com.academicagent.platform.identity.mapper.UserCredentialMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,21 +26,21 @@ public class ProviderSettingsService {
     private static final List<String> PROFILES =
             List.of("planner", "reviewer", "writer", "extractor", "embedder");
 
-    private final UserCredentialRepository credentialRepository;
+    private final UserCredentialMapper credentialMapper;
     private final AesEncryptionService encryptionService;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     public ProviderSettingsService(
-            UserCredentialRepository credentialRepository, AesEncryptionService encryptionService) {
-        this.credentialRepository = credentialRepository;
+            UserCredentialMapper credentialMapper, AesEncryptionService encryptionService) {
+        this.credentialMapper = credentialMapper;
         this.encryptionService = encryptionService;
     }
 
     @Transactional(readOnly = true)
     public ProviderSettingsView getMasked(String userId) {
-        List<UserCredential> stored = credentialRepository.findByUserId(userId);
+        List<UserCredential> stored = credentialMapper.findByUserId(userId);
         Map<String, ProviderProfileMasked> profiles = new LinkedHashMap<>();
         for (String profile : PROFILES) {
             UserCredential credential = stored.stream()
@@ -69,29 +69,35 @@ public class ProviderSettingsService {
     public ProviderSettingsView upsert(
             String userId, String profile, String provider, String model, String apiKey, String baseUrl) {
         Instant now = Instant.now();
-        UserCredential credential = credentialRepository
-                .findByUserIdAndProfile(userId, profile)
-                .orElseGet(() -> {
-                    UserCredential created = new UserCredential();
-                    created.setCredentialId(UUID.randomUUID().toString());
-                    created.setUserId(userId);
-                    created.setProfile(profile);
-                    created.setCreatedAt(now);
-                    return created;
-                });
+        var existing = credentialMapper.findByUserIdAndProfile(userId, profile);
+        UserCredential credential;
+        boolean isNew = existing.isEmpty();
+        if (isNew) {
+            credential = new UserCredential();
+            credential.setCredentialId(UUID.randomUUID().toString());
+            credential.setUserId(userId);
+            credential.setProfile(profile);
+            credential.setCreatedAt(now);
+        } else {
+            credential = existing.get();
+        }
         credential.setProvider(provider);
         credential.setModel(model);
         credential.setApiKeyEncrypted(encryptionService.encrypt(apiKey));
         credential.setBaseUrl(baseUrl);
         credential.setUpdatedAt(now);
-        credentialRepository.save(credential);
+        if (isNew) {
+            credentialMapper.insert(credential);
+        } else {
+            credentialMapper.updateById(credential);
+        }
         return getMasked(userId);
     }
 
     @Transactional(readOnly = true)
     public Map<String, DecryptedProviderCredential> getDecrypted(String userId) {
         Map<String, DecryptedProviderCredential> result = new LinkedHashMap<>();
-        for (UserCredential credential : credentialRepository.findByUserId(userId)) {
+        for (UserCredential credential : credentialMapper.findByUserId(userId)) {
             result.put(
                     credential.getProfile(),
                     new DecryptedProviderCredential(

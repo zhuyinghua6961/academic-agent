@@ -2,35 +2,26 @@ package com.academicagent.platform.research.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import com.academicagent.platform.common.PostgresJsonbTypeHandler;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "research", name = "run_events")
+@TableName(value = "run_events", schema = "research")
 public class RunEvent {
 
-    @Id
-    @Column(name = "event_id", length = 36)
+    @TableId("event_id")
     private String eventId;
 
-    @Column(name = "run_id", nullable = false, length = 36)
     private String runId;
 
-    @Column(name = "event_type", nullable = false, length = 64)
     private String eventType;
 
-    @Column(nullable = false)
     private int ordinal;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(nullable = false, columnDefinition = "jsonb")
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String payload;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public String getEventId() {

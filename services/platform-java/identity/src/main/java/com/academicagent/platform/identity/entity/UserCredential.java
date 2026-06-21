@@ -2,45 +2,29 @@ package com.academicagent.platform.identity.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(
-        schema = "identity",
-        name = "user_credentials",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "profile"}))
+@TableName(value = "user_credentials", schema = "identity")
 public class UserCredential {
 
-    @Id
-    @Column(name = "credential_id", length = 36)
+    @TableId("credential_id")
     private String credentialId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(nullable = false, length = 32)
     private String profile;
 
-    @Column(nullable = false, length = 64)
     private String provider;
 
-    @Column(nullable = false, length = 128)
     private String model;
 
-    @Column(name = "api_key_encrypted", nullable = false, columnDefinition = "TEXT")
     private String apiKeyEncrypted;
 
-    @Column(name = "base_url", length = 512)
     private String baseUrl;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     public String getCredentialId() {

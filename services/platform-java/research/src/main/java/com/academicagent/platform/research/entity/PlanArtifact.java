@@ -2,44 +2,32 @@ package com.academicagent.platform.research.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
+import com.academicagent.platform.common.PostgresJsonbTypeHandler;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "agent", name = "artifacts")
+@TableName(value = "artifacts", schema = "agent")
 public class PlanArtifact {
 
-    @Id
-    @Column(name = "artifact_id", length = 36)
+    @TableId("artifact_id")
     private String artifactId;
 
-    @Column(name = "thread_id", nullable = false, length = 36)
     private String threadId;
 
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Column(name = "artifact_type", nullable = false, length = 64)
     private String artifactType;
 
-    @Column(nullable = false, length = 32)
     private String status;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(columnDefinition = "jsonb")
+    @TableField(typeHandler = PostgresJsonbTypeHandler.class)
     private String body;
 
-    @Column(nullable = false)
     private boolean frozen;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     public String getArtifactId() {

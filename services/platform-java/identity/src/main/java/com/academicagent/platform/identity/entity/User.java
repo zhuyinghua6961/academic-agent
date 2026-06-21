@@ -2,29 +2,21 @@ package com.academicagent.platform.identity.entity;
 
 import java.time.Instant;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(schema = "identity", name = "users")
+@TableName(value = "users", schema = "identity")
 public class User {
 
-    @Id
-    @Column(name = "user_id", length = 36)
+    @TableId("user_id")
     private String userId;
 
-    @Column(nullable = false, unique = true)
     private String email;
 
-    @Column(name = "display_name", nullable = false)
     private String displayName;
 
-    @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
-    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     public String getUserId() {

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.academicagent.platform.research.mapper.PlanArtifactMapper">
+
+    <resultMap id="PlanArtifactResultMap" type="com.academicagent.platform.research.entity.PlanArtifact">
+        <id column="artifact_id" property="artifactId"/>
+        <result column="thread_id" property="threadId"/>
+        <result column="user_id" property="userId"/>
+        <result column="artifact_type" property="artifactType"/>
+        <result column="status" property="status"/>
+        <result column="body" property="body"
+                typeHandler="com.academicagent.platform.common.PostgresJsonbTypeHandler"/>
+        <result column="frozen" property="frozen"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <select id="selectLatestByThreadAndUser" resultMap="PlanArtifactResultMap">
+        SELECT artifact_id, thread_id, user_id, artifact_type, status, body, frozen, created_at, updated_at
+        FROM agent.artifacts
+        WHERE thread_id = #{threadId}
+          AND user_id = #{userId}
+        ORDER BY updated_at DESC
+        LIMIT 1
+    </select>
+</mapper>

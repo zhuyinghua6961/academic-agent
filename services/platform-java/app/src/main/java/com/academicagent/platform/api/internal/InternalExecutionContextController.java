@@ -5,7 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.academicagent.platform.common.ApiException;
 import com.academicagent.platform.identity.model.DecryptedProviderCredential;
 import com.academicagent.platform.identity.model.DecryptedSearchCredential;
 import com.academicagent.platform.identity.model.ExecutionContext;
@@ -13,10 +12,9 @@ import com.academicagent.platform.identity.service.ExecutionContextService;
 import com.academicagent.platform.research.entity.Project;
 import com.academicagent.platform.research.entity.Run;
 import com.academicagent.platform.research.entity.Thread;
-import com.academicagent.platform.research.repository.RunRepository;
 import com.academicagent.platform.research.service.ProjectService;
+import com.academicagent.platform.research.service.RunService;
 import com.academicagent.platform.research.service.ThreadService;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,17 +25,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class InternalExecutionContextController {
 
     private final ExecutionContextService executionContextService;
-    private final RunRepository runRepository;
+    private final RunService runService;
     private final ThreadService threadService;
     private final ProjectService projectService;
 
     public InternalExecutionContextController(
             ExecutionContextService executionContextService,
-            RunRepository runRepository,
+            RunService runService,
             ThreadService threadService,
             ProjectService projectService) {
         this.executionContextService = executionContextService;
-        this.runRepository = runRepository;
+        this.runService = runService;
         this.threadService = threadService;
         this.projectService = projectService;
     }
@@ -54,9 +52,7 @@ public class InternalExecutionContextController {
 
     @GetMapping("/runs/{runId}/execution-context")
     public Map<String, Object> getRunExecutionContext(@PathVariable String runId) {
-        Run run = runRepository
-                .findById(runId)
-                .orElseThrow(() -> new ApiException("Run not found", HttpStatus.NOT_FOUND, "run_not_found"));
+        Run run = runService.requireById(runId);
         Thread thread = threadService.requireById(run.getThreadId());
         Project project = projectService.requireById(thread.getProjectId());
 
