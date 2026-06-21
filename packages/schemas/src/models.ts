@@ -4,7 +4,6 @@ export const JsonObjectSchema = z.record(z.string(), z.unknown());
 export type JsonObject = z.infer<typeof JsonObjectSchema>;
 
 export const ProviderNameSchema = z.enum([
-  "mock",
   "openai",
   "anthropic",
   "openai_compatible",
@@ -77,6 +76,22 @@ export const WorkflowThreadSchema = strict({
   project_id: z.string(),
   name: z.string().nullable().optional(),
   created_at: z.string(),
+  current_mode: z.enum(["idea_plan", "experiment_design"]).default("idea_plan"),
+  lifecycle_state: z
+    .enum([
+      "idle",
+      "lightweight_diagnosis",
+      "idea_understanding",
+      "human_agent_reading",
+      "innovation_hook_mining",
+      "candidate_idea_review",
+      "research_idea_plan_freeze",
+      "experiment_design",
+      "paused",
+    ])
+    .default("lightweight_diagnosis"),
+  idea_version: z.number().int().default(1),
+  impact_level: z.enum(["None", "Minor", "Major", "Fatal"]).default("None"),
 });
 export type WorkflowThread = z.infer<typeof WorkflowThreadSchema>;
 
@@ -114,7 +129,7 @@ export type ThreadMessage = z.infer<typeof ThreadMessageSchema>;
 export const ModeRunSchema = strict({
   run_id: z.string(),
   thread_id: z.string(),
-  mode: z.literal("idea_plan"),
+  mode: z.enum(["idea_plan", "experiment_design"]),
   status: z.enum(["created", "running", "completed", "failed", "cancelled"]),
   input_idea: z.string(),
   artifact_id: z.string().nullable().optional(),
@@ -167,6 +182,8 @@ export const SearchResultSchema = strict({
   published_at: z.string().nullable().optional(),
   updated_at: z.string().nullable().optional(),
   pdf_url: z.string().nullable().optional(),
+  publication_status: z.enum(["preprint", "accepted", "published", "unknown"]).optional(),
+  venue: z.string().nullable().optional(),
   metadata: JsonObjectSchema.default({}),
 });
 export type SearchResult = z.infer<typeof SearchResultSchema>;
@@ -207,7 +224,7 @@ export type SearchProvidersResponse = z.infer<typeof SearchProvidersResponseSche
 
 export const ContextPacketSchema = strict({
   context_id: z.string(),
-  mode: z.literal("idea_plan"),
+  mode: z.enum(["idea_plan", "experiment_design"]),
   task: z.string(),
   idea: z.string(),
   relevant_artifacts: z.array(z.string()).default([]),
@@ -244,6 +261,9 @@ export const MemoryRecordSchema = strict({
     "current_plan",
     "idea_review",
     "paper_evidence",
+    "paper_mini_review",
+    "innovation_hook",
+    "disagreement_log",
     "conversation_summary",
     "stale_recheck",
   ]),
@@ -293,6 +313,8 @@ export const ConflictRecordSchema = strict({
     "review_decision_conflict",
     "freeze_gate_conflict",
     "stale_evidence_conflict",
+    "unverified_paper_advance",
+    "fatal_disagreement",
   ]),
   status: z.enum(["open", "resolved"]).default("open"),
   summary: z.string(),
@@ -317,7 +339,19 @@ export type MemoryRecheckResponse = z.infer<typeof MemoryRecheckResponseSchema>;
 
 export const ArtifactMetadataSchema = strict({
   artifact_id: z.string(),
-  artifact_type: z.enum(["ResearchIdeaPlanDraft", "ResearchIdeaPlan", "PaperSearchEvidence"]),
+  artifact_type: z.enum([
+    "ResearchIdeaPlanDraft",
+    "ResearchIdeaPlan",
+    "PaperSearchEvidence",
+    "PaperMiniReview",
+    "InnovationHook",
+    "DisagreementLog",
+    "IdeaMetaReview",
+    "ClosestWorkMatrix",
+    "ExperimentBlueprintDraft",
+    "ExperimentBlueprint",
+    "ExperimentMetaReview",
+  ]),
   status: z.enum(["draft", "frozen"]),
   title: z.string(),
   path: z.string(),
@@ -329,11 +363,14 @@ export const ArtifactMetadataSchema = strict({
 });
 export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
 
+const ResearchIdeaPlanBodyPayloadSchema = z.object({}).passthrough();
+
 export const ResearchIdeaPlanDraftSchema = strict({
   artifact_id: z.string(),
   title: z.string(),
   source_run_id: z.string(),
   diagnosis: DiagnosisSchema,
+  body: ResearchIdeaPlanBodyPayloadSchema.default({}),
   context_id: z.string(),
   markdown_path: z.string(),
   metadata_path: z.string(),
@@ -348,6 +385,7 @@ export const ResearchIdeaPlanSchema = strict({
   source_run_id: z.string(),
   title: z.string(),
   diagnosis: DiagnosisSchema,
+  body: ResearchIdeaPlanBodyPayloadSchema.default({}),
   context_id: z.string(),
   markdown_path: z.string(),
   metadata_path: z.string(),
@@ -548,14 +586,25 @@ export const FreezeIdeaPlanResponseSchema = strict({
 export type FreezeIdeaPlanResponse = z.infer<typeof FreezeIdeaPlanResponseSchema>;
 
 export const ReviewIdeaPlanRequestSchema = strict({
-  decision: z.enum(["Reject", "Revise", "Advance"]),
+  decision: z.enum(["Reject", "Revise", "Advance", "Provisional"]),
   notes: z.string().nullable().optional(),
+  scores: z
+    .object({
+      originality: z.number().int().min(0).max(6).optional(),
+      significance: z.number().int().min(0).max(6).optional(),
+      soundness: z.number().int().min(0).max(6).optional(),
+      clarity: z.number().int().min(0).max(6).optional(),
+      feasibility_resource_fit: z.number().int().min(0).max(6).optional(),
+    })
+    .strict()
+    .optional(),
+  confidence: z.enum(["high", "medium", "low"]).optional(),
 });
 export type ReviewIdeaPlanRequest = z.infer<typeof ReviewIdeaPlanRequestSchema>;
 
 export const ReviewIdeaPlanResponseSchema = strict({
   thread: WorkflowThreadSchema,
-  decision: z.enum(["Reject", "Revise", "Advance"]),
+  decision: z.enum(["Reject", "Revise", "Advance", "Provisional"]),
   session_status: z.string(),
   notes: z.string().nullable().optional(),
 });

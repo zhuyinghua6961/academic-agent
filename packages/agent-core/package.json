@@ -12,6 +12,7 @@
   "dependencies": {
     "@academic-agent/config": "workspace:*",
     "@academic-agent/harness": "workspace:*",
+    "@academic-agent/pdf-ingest": "workspace:*",
     "@academic-agent/providers": "workspace:*",
     "@academic-agent/schemas": "workspace:*",
     "@academic-agent/search": "workspace:*",

@@ -1,0 +1,11 @@
+{
+  "output": {
+    "content": "{\"problem\":\"文生图模型研究\",\"gap\":\"需确认与近邻工作的机制差异\",\"candidate_mechanism\":\"改进扩散采样与条件注入\",\"evidence_needed\":[\"检索近邻论文\",\"设计对照实验\"],\"main_uncertainty\":\"novelty 是否成立\",\"clarifying_questions\":[\"目标分辨率？\",\"算力预算？\"]}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {
+    "input_tokens": 200,
+    "output_tokens": 80
+  }
+}

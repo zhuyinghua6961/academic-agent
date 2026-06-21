@@ -1,4 +1,4 @@
-import type {JsonObject, ProviderResponse, ToolCall} from "@academic-agent/schemas";
+import type {JsonObject, ProviderResponse, ResearchIdeaPlanBody, SearchBudgetState, ToolCall} from "@academic-agent/schemas";
 
 import type {HistoryContextPacket} from "./context.js";
 import type {IdeaPlanRunner} from "./runner.js";
@@ -17,6 +17,10 @@ export type IdeaPlanState = {
   draft?: Record<string, unknown>;
   diagnosis?: Record<string, unknown>;
   history_context?: HistoryContextPacket;
+  plan_body: ResearchIdeaPlanBody;
+  search_budget: SearchBudgetState;
+  seen_paper_keys: string[];
+  human_read_papers: string[];
 };
 
 export async function runAgentLoop(
@@ -205,22 +209,10 @@ export function assistantSummary(
   );
 }
 
-export function fallbackDiagnosis(idea: string): {
-  problem: string;
-  gap: string;
-  candidate_mechanism: string;
-  evidence_needed: string[];
-  main_uncertainty: string;
-  clarifying_questions: string[];
-} {
-  return {
-    problem: `用户提出的研究方向是：${idea.trim()}`,
-    gap: "未能从 LLM 响应中提取诊断结果。",
-    candidate_mechanism: "需重新运行以获取诊断。",
-    evidence_needed: ["重新运行并检查 LLM 输出。", "确认 provider 和 prompt 配置正确。"],
-    main_uncertainty: "未能获取 LLM 诊断结果。",
-    clarifying_questions: [],
-  };
+export function fallbackDiagnosis(idea: string): never {
+  throw new Error(
+    `LLM diagnosis extraction failed for idea "${idea.trim().slice(0, 80)}". Re-run with a configured provider.`,
+  );
 }
 
 export function fallbackTitle(idea: string): string {

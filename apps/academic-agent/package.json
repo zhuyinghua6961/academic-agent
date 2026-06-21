@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@academic-agent/agent-core": "workspace:*",
     "@academic-agent/core-service": "workspace:*",
     "@academic-agent/schemas": "workspace:*",
     "ink": "^5.2.1",

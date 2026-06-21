@@ -2,14 +2,16 @@
 .env
 .env.*
 !.env.example
-.academic-agent/.env
-!.academic-agent/.env.example
+**/.env
+!**/.env.example
 
-# Academic Agent local workspace
-.academic-agent/*
-!.academic-agent/
-!.academic-agent/config.toml
+# Academic Agent local workspace (SQLite, artifacts, traces, cache, papers, etc.)
+.academic-agent/**
 !.academic-agent/.env.example
+!.academic-agent/config.toml.example
+
+# Per-machine provider/search settings (copy from config.toml.example or use setup wizard)
+.academic-agent/config.toml
 
 # Python
 __pycache__/
@@ -35,6 +37,7 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+**/node_modules/.vite/
 
 # Build outputs
 dist/
@@ -53,8 +56,9 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
 
-# Local assistant/tool state
+# Local assistant / IDE tool state
 .agents/
 .codex/
 .claude/

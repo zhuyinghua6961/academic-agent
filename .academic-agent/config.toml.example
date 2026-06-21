@@ -1,0 +1,82 @@
+# Academic Agent project config
+# Configure the planner through the first-run setup. Secrets stay in env files.
+
+[runtime]
+core_host = "127.0.0.1"
+core_port = 8765
+
+[context.compaction]
+enabled = true
+# Leave context_window_tokens unset or 0 to infer a conservative model window.
+context_window_tokens = 0
+# Compact thread history when estimated history tokens pass this ratio of the history budget.
+compact_trigger_ratio = 0.85
+# Max token budget for thread history after reserving system/tool/output budget.
+max_history_tokens = 2400
+response_token_reserve = 1600
+system_tool_token_reserve = 2600
+chars_per_token = 4.0
+min_recent_messages = 4
+max_recent_messages = 16
+recent_token_ratio = 0.55
+important_message_limit = 6
+important_token_ratio = 0.25
+summary_token_ratio = 0.35
+per_message_token_limit = 240
+
+# Artifact-first memory context: current plan/review/evidence is injected before chat history.
+artifact_token_ratio = 0.20
+artifact_max_tokens = 4000
+paper_evidence_limit = 3
+
+[memory]
+retrieval_limit = 8
+vector_dimensions = 96
+paper_evidence_ttl_days = 30
+stale_recheck_enabled = true
+conflict_detection_enabled = true
+
+# Example OpenAI planner profile:
+# [providers.planner]
+# provider = "openai"
+# model = "gpt-5.1"
+# api_key_env = "OPENAI_API_KEY"
+# base_url = "https://api.openai.com/v1"
+# max_output_tokens = 3000
+# reasoning_effort = "medium"
+# reasoning_summary = "auto"
+#
+# Example OpenAI-compatible planner profile, such as a local gateway,
+# vLLM server, LiteLLM proxy, or another /chat/completions-compatible endpoint:
+# [providers.planner]
+# provider = "openai_compatible"
+# model = "your-model-name"
+# api_key_env = "ACADEMIC_AGENT_OPENAI_COMPATIBLE_API_KEY"
+# base_url = "http://127.0.0.1:8000/v1"
+#
+# You can also override planner provider settings with env vars:
+# ACADEMIC_AGENT_PROVIDER, ACADEMIC_AGENT_MODEL,
+# ACADEMIC_AGENT_BASE_URL, ACADEMIC_AGENT_API_KEY_ENV,
+# ACADEMIC_AGENT_REASONING_EFFORT, ACADEMIC_AGENT_REASONING_SUMMARY.
+
+[search]
+paper_sources = ["arxiv", "openalex"]
+web_sources = ["brave", "tavily", "serper", "serpapi", "duckduckgo"]
+timeout_seconds = 30
+trust_env = true
+
+[search.brave]
+api_key_env = "BRAVE_SEARCH_API_KEY"
+base_url = "https://api.search.brave.com/res/v1/web/search"
+
+[search.tavily]
+api_key_env = "TAVILY_API_KEY"
+base_url = "https://api.tavily.com/search"
+
+[search.serper]
+api_key_env = "SERPER_API_KEY"
+base_url = "https://google.serper.dev/search"
+
+[search.serpapi]
+api_key_env = "SERPAPI_API_KEY"
+base_url = "https://serpapi.com/search.json"

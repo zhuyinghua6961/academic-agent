@@ -26,6 +26,8 @@ import type {
   ThreadContextResponse,
   ThreadListResponse,
   ThreadMessagesResponse,
+  PlanConvergenceStatus,
+  ThreadPapersResponse,
   WorkflowThread,
 } from "@academic-agent/schemas";
 
@@ -141,8 +143,75 @@ export class AcademicAgentClient {
     return this.wrap(() => this.core.freezeThreadPlan(threadId));
   }
 
+  threadConvergence(threadId: string): PlanConvergenceStatus {
+    return this.wrap(() => this.core.threadConvergence(threadId));
+  }
+
+  listThreadPapers(threadId: string): ThreadPapersResponse {
+    return this.wrap(() => this.core.listThreadPapers(threadId));
+  }
+
+  triggerIdeaMetaReview(threadId: string) {
+    return this.wrapAsync(() => this.core.triggerIdeaMetaReview(threadId));
+  }
+
+  registerThreadPaper(
+    threadId: string,
+    localPath: string,
+    options?: {title?: string; doi?: string; arxiv_id?: string},
+  ) {
+    return this.wrap(() => this.core.registerThreadPaper(threadId, localPath, options));
+  }
+
+  linkThreadPaperEvidence(threadId: string, evidenceId: string, paperId: string) {
+    return this.wrap(() => this.core.linkThreadPaperEvidence(threadId, evidenceId, paperId));
+  }
+
+  setThreadReadingRequest(
+    threadId: string,
+    request: {mode: "quick" | "guided" | "exam"; paper_id: string; query?: string},
+  ) {
+    return this.wrap(() => this.core.setThreadReadingRequest(threadId, request));
+  }
+
+  triggerExperimentMetaReview(threadId: string) {
+    return this.wrapAsync(() => this.core.triggerExperimentMetaReview(threadId));
+  }
+
+  switchThreadToIdeaPlan(threadId: string) {
+    return this.wrap(() => this.core.switchThreadToIdeaPlan(threadId));
+  }
+
+  listThreadHooks(threadId: string) {
+    return this.wrap(() => this.core.listThreadHooks(threadId));
+  }
+
+  listThreadDisagreements(threadId: string) {
+    return this.wrap(() => this.core.listThreadDisagreements(threadId));
+  }
+
+  readThreadBlueprint(threadId: string) {
+    return this.wrap(() => this.core.readThreadBlueprint(threadId));
+  }
+
+  startExperimentDesignRun(threadId: string, content: string): Promise<StartIdeaPlanRunResponse> {
+    return this.wrapAsync(() => this.core.startExperimentDesignRun(threadId, content));
+  }
+
+  freezeThreadBlueprint(threadId: string) {
+    return this.wrap(() => this.core.freezeThreadBlueprint(threadId));
+  }
+
+  reviewThreadBlueprint(threadId: string, decision: string, notes?: string | null) {
+    return this.wrap(() => this.core.reviewThreadBlueprint(threadId, decision, notes));
+  }
+
+  pauseThread(threadId: string, reason?: string | null): WorkflowThread {
+    return this.wrap(() => this.core.pauseThread(threadId, reason));
+  }
+
   reviewThreadPlan(threadId: string, payload: ReviewIdeaPlanRequest): ReviewIdeaPlanResponse {
-    return this.wrap(() => this.core.reviewThreadPlan(threadId, payload));
+    return this.wrap(() => this.core.reviewThreadPlanWithSideEffects(threadId, payload));
   }
 
   listCache(): AppCacheListResponse {

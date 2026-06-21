@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"main_claim\":\"Main claim\",\"claim_evidence_map\":[],\"experiment_set\":[],\"review_notes\":\"planner noop\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 50, "output_tokens": 20}
+}

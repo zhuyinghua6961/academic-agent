@@ -19,15 +19,15 @@ ResearchIdeaPlan frozen
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
 | Foundation Skeleton | 可运行 | TypeScript monorepo：Ink TUI + agent-core + SQLite workspace |
-| Idea Plan Mode | v0 可用 | 支持多轮 idea 诊断、检索、working trace、artifact 更新和 final synthesis fallback |
-| Memory / Context / Compact | v0.5 | 支持 context usage、双层 compact、conversation summary、trace；尚未实现完整 semantic retrieval / rehydrate |
-| Search / Tool Loop | v0.5 | 支持 arXiv、OpenAlex、Tavily 等；有 arXiv fallback query、429 cooldown、部分失败显示 |
-| Session / TUI | v0.5 | 支持 `/new`、`/resume`、`/rename`、`/quit`、Esc interrupt、working trace、context usage |
-| Experiment Design Mode | 文档完成 | 代码未实现 |
+| Idea Plan Mode | v1 真实现 | RecordedProvider e2e、收敛门禁、subagent live、slash 全接线 |
+| Memory / Context / Compact | v0.5 | context usage、compact、conversation summary、trace |
+| Search / Tool Loop | v1 | arXiv/OpenAlex、发表状态/venue 排序、search budget、`register_local_paper` / `paper_read_section` |
+| Session / TUI | v1 | `/status`、`/papers`、`/convergence`、`/meta-review`、`/experiment` 等（见 [docs/slash-commands.md](docs/slash-commands.md)） |
+| Experiment Design Mode | v1 垂直切片 | 真 agent 循环 + `update_blueprint_body`、并行 reviewer、blueprint freeze |
 | Execution Plan Mode | 文档完成 | 代码未实现 |
 | Result Analysis Mode | 文档完成 | 代码未实现 |
 | Writing / Revision Mode | 文档完成 | 代码未实现 |
-| Multi-agent Harness | 文档完成，部分 runtime 雏形 | 尚未实现完整 controlled subagents / AC review fan-in |
+| Multi-agent Harness | v1 雏形 | SubagentHarness live LLM、并行 fan-out、HandoffPacket 契约 |
 
 准确地说，当前版本是：
 
@@ -44,7 +44,7 @@ ResearchIdeaPlan frozen
 - Agent core: 自研 agent loop（`packages/agent-core`），非 LangGraph
 - Storage: `.academic-agent/` local workspace，SQLite + files
 - Schema: Zod（`packages/schemas`）
-- Providers: mock、OpenAI、Anthropic、OpenAI-compatible、DeepSeek
+- Providers: OpenAI、Anthropic、OpenAI-compatible、DeepSeek（测试用 RecordedProvider 回放 fixture）
 - Search: arXiv、OpenAlex、Tavily、Brave、Serper、SerpAPI、DuckDuckGo
 
 ## 目录结构
@@ -82,13 +82,19 @@ make install
 cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npm run build-release
 ```
 
-### 2. 开发 mock 模式
+### 2. CI / 无 API Key 测试
 
-测试或本地开发可使用 mock provider：
+CI 与本地无 key 测试使用 **RecordedProvider** 回放 `tests/recordings/` 中的真实 LLM 轨迹：
 
 ```bash
-export ACADEMIC_AGENT_ALLOW_MOCK=1
+export ACADEMIC_AGENT_RECORDED_PROVIDER=1
+export ACADEMIC_AGENT_RECORDINGS_DIR=tests/recordings/idea-plan
+export ACADEMIC_AGENT_ENABLE_LIVE_PROVIDERS=1
+export TEST_KEY=test-key
+pnpm test
 ```
+
+未配置 API key 时 Setup Wizard 保持 `unconfigured`，**不会** fallback 到假 provider。
 
 ### 3. 启动
 

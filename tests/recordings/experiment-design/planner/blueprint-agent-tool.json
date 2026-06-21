@@ -1,0 +1,39 @@
+{
+  "output": {
+    "content": "",
+    "tool_calls": [
+      {
+        "call_id": "call_exp_blueprint_1",
+        "name": "update_blueprint_body",
+        "arguments": {
+          "body_patch": {
+            "claim_evidence_map": [
+              {
+                "claim": "Main claim",
+                "evidence_needed": "Beat strong baselines",
+                "support_result": "+2pt FID",
+                "weaken_result": "<0.5pt",
+                "falsify_result": "worse than baseline",
+                "required_experiment": "Main benchmark comparison"
+              }
+            ],
+            "experiment_set": [
+              {
+                "name": "Main comparison",
+                "tier": "must-have",
+                "purpose": "Test core claim",
+                "supports_claim": "Main claim"
+              }
+            ],
+            "review_notes": "Agent loop updated blueprint"
+          }
+        }
+      }
+    ],
+    "finish_reason": "tool_calls"
+  },
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 80
+  }
+}

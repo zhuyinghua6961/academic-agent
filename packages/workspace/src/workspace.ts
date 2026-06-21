@@ -301,9 +301,47 @@ export class ProjectWorkspace {
     if (!columns.has("name")) {
       conn.exec("alter table threads add column name text");
     }
+    if (!columns.has("current_mode")) {
+      conn.exec("alter table threads add column current_mode text not null default 'idea_plan'");
+    }
+    if (!columns.has("lifecycle_state")) {
+      conn.exec(
+        "alter table threads add column lifecycle_state text not null default 'lightweight_diagnosis'",
+      );
+    }
+    if (!columns.has("idea_version")) {
+      conn.exec("alter table threads add column idea_version integer not null default 1");
+    }
+    if (!columns.has("impact_level")) {
+      conn.exec("alter table threads add column impact_level text not null default 'None'");
+    }
     conn.exec(`
       create unique index if not exists threads_project_name_unique
       on threads(project_id, name)
+    `);
+
+    const reviewColumns = new Set(
+      (conn.prepare("pragma table_info(idea_reviews)").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!reviewColumns.has("scores_json")) {
+      conn.exec("alter table idea_reviews add column scores_json text");
+    }
+    if (!reviewColumns.has("confidence")) {
+      conn.exec("alter table idea_reviews add column confidence text");
+    }
+
+    conn.exec(`
+      create table if not exists blueprint_reviews(
+          review_id text primary key,
+          thread_id text not null,
+          artifact_id text not null,
+          run_id text not null,
+          decision text not null,
+          notes text,
+          created_at text not null
+      )
     `);
 
     const messagesColumns = new Set(
@@ -330,8 +368,16 @@ export class ProjectWorkspace {
       project_id: str(row, "project_id"),
       name: strOrNull(row, "name"),
       created_at: str(row, "created_at"),
+      current_mode: (strOrNull(row, "current_mode") ?? "idea_plan") as WorkflowThread["current_mode"],
+      lifecycle_state: (strOrNull(row, "lifecycle_state") ??
+        "lightweight_diagnosis") as WorkflowThread["lifecycle_state"],
+      idea_version: row.idea_version != null ? int(row, "idea_version") : 1,
+      impact_level: (strOrNull(row, "impact_level") ?? "None") as WorkflowThread["impact_level"],
     };
   }
+
+  private static readonly THREAD_SELECT =
+    "select thread_id, project_id, name, created_at, current_mode, lifecycle_state, idea_version, impact_level from threads";
 
   get_thread(threadId: string): WorkflowThread {
     this.ensure_initialized();
@@ -339,9 +385,7 @@ export class ProjectWorkspace {
     let row: SqlRow | undefined;
     try {
       row = conn
-        .prepare(
-          "select thread_id, project_id, name, created_at from threads where thread_id = ?",
-        )
+        .prepare(`${ProjectWorkspace.THREAD_SELECT} where thread_id = ?`)
         .get(threadId) as SqlRow | undefined;
     } finally {
       conn.close();
@@ -363,7 +407,7 @@ export class ProjectWorkspace {
       rows = conn
         .prepare(
           `
-          select thread_id, project_id, name, created_at
+          select thread_id, project_id, name, created_at, current_mode, lifecycle_state, idea_version, impact_level
           from threads
           ${messageFilter}
           order by created_at desc
@@ -482,7 +526,7 @@ export class ProjectWorkspace {
       row = conn
         .prepare(
           `
-          select thread_id, project_id, name, created_at
+          select thread_id, project_id, name, created_at, current_mode, lifecycle_state, idea_version, impact_level
           from threads
           where project_id = ? and name = ?
           `,
@@ -547,9 +591,7 @@ export class ProjectWorkspace {
       const conn = this.connect();
       try {
         existing = conn
-          .prepare(
-            "select thread_id, project_id, name, created_at from threads where thread_id = ?",
-          )
+          .prepare(`${ProjectWorkspace.THREAD_SELECT} where thread_id = ?`)
           .get(threadId) as SqlRow | undefined;
       } finally {
         conn.close();
@@ -563,17 +605,33 @@ export class ProjectWorkspace {
       project_id: this.projectId,
       name: name?.trim() ? name.trim() : null,
       created_at: now,
+      current_mode: "idea_plan",
+      lifecycle_state: "lightweight_diagnosis",
+      idea_version: 1,
+      impact_level: "None",
     };
     const conn = this.connect();
     try {
       conn
         .prepare(
           `
-          insert or ignore into threads(thread_id, project_id, name, created_at)
-          values (?, ?, ?, ?)
+          insert or ignore into threads(
+            thread_id, project_id, name, created_at,
+            current_mode, lifecycle_state, idea_version, impact_level
+          )
+          values (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
-        .run(thread.thread_id, thread.project_id, thread.name, thread.created_at);
+        .run(
+          thread.thread_id,
+          thread.project_id,
+          thread.name,
+          thread.created_at,
+          thread.current_mode,
+          thread.lifecycle_state,
+          thread.idea_version,
+          thread.impact_level,
+        );
     } finally {
       conn.close();
     }
@@ -673,13 +731,13 @@ export class ProjectWorkspace {
     }));
   }
 
-  create_run(threadId: string, idea: string): ModeRun {
+  create_run(threadId: string, idea: string, mode: ModeRun["mode"] = "idea_plan"): ModeRun {
     this.ensure_initialized();
     const now = utcNow();
     const run: ModeRun = {
       run_id: newId("run"),
       thread_id: threadId,
-      mode: "idea_plan",
+      mode,
       status: "created",
       input_idea: idea,
       artifact_id: null,
@@ -926,6 +984,51 @@ export class ProjectWorkspace {
     }
   }
 
+  latest_artifact_by_type(threadId: string, artifactType: string): ArtifactMetadata | null {
+    return this.latest_artifact_for_thread(threadId, artifactType);
+  }
+
+  count_thread_artifacts(threadId: string, artifactType: string): number {
+    this.ensure_initialized();
+    const conn = this.connect();
+    let row: SqlRow | undefined;
+    try {
+      row = conn
+        .prepare(
+          `
+          select count(*) as count
+          from artifacts
+          join runs on runs.run_id = artifacts.run_id
+          where runs.thread_id = ? and artifacts.artifact_type = ?
+          `,
+        )
+        .get(threadId, artifactType) as SqlRow | undefined;
+    } finally {
+      conn.close();
+    }
+    return row ? int(row, "count") : 0;
+  }
+
+  count_open_disagreements(threadId: string, impactLevel: string): number {
+    const logs = this.latest_artifacts_for_thread(threadId, "DisagreementLog", 50);
+    let count = 0;
+    for (const meta of logs) {
+      try {
+        const payload: unknown = JSON.parse(fs.readFileSync(meta.metadata_path, "utf8"));
+        const record = payload as {log?: {status?: string; impact_on_idea_version?: string}};
+        if (
+          record.log?.status === "open" &&
+          record.log?.impact_on_idea_version === impactLevel
+        ) {
+          count += 1;
+        }
+      } catch {
+        // skip corrupt metadata
+      }
+    }
+    return count;
+  }
+
   latest_artifact_for_thread(
     threadId: string,
     artifactType = "ResearchIdeaPlanDraft",
@@ -1024,7 +1127,96 @@ export class ProjectWorkspace {
     );
   }
 
+  update_thread_workflow(
+    threadId: string,
+    patch: Partial<
+      Pick<WorkflowThread, "current_mode" | "lifecycle_state" | "idea_version" | "impact_level">
+    >,
+  ): WorkflowThread {
+    this.ensure_initialized();
+    const conn = this.connect();
+    try {
+      if (patch.current_mode !== undefined) {
+        conn.prepare("update threads set current_mode = ? where thread_id = ?").run(
+          patch.current_mode,
+          threadId,
+        );
+      }
+      if (patch.lifecycle_state !== undefined) {
+        conn.prepare("update threads set lifecycle_state = ? where thread_id = ?").run(
+          patch.lifecycle_state,
+          threadId,
+        );
+      }
+      if (patch.idea_version !== undefined) {
+        conn.prepare("update threads set idea_version = ? where thread_id = ?").run(
+          patch.idea_version,
+          threadId,
+        );
+      }
+      if (patch.impact_level !== undefined) {
+        conn.prepare("update threads set impact_level = ? where thread_id = ?").run(
+          patch.impact_level,
+          threadId,
+        );
+      }
+    } finally {
+      conn.close();
+    }
+    return this.get_thread(threadId);
+  }
+
   record_idea_review(
+    threadId: string,
+    artifactId: string,
+    runId: string,
+    decision: string,
+    notes?: string | null,
+    scores?: Record<string, number> | null,
+    confidence?: string | null,
+  ): Record<string, unknown> {
+    this.ensure_initialized();
+    const review: Record<string, unknown> = {
+      review_id: newId("review"),
+      thread_id: threadId,
+      artifact_id: artifactId,
+      run_id: runId,
+      decision,
+      notes: notes ?? null,
+      scores_json: scores ? JSON.stringify(scores) : null,
+      confidence: confidence ?? null,
+      created_at: utcNow(),
+    };
+    const conn = this.connect();
+    try {
+      conn
+        .prepare(
+          `
+          insert into idea_reviews(
+            review_id, thread_id, artifact_id, run_id,
+            decision, notes, scores_json, confidence, created_at
+          )
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          review.review_id,
+          review.thread_id,
+          review.artifact_id,
+          review.run_id,
+          review.decision,
+          review.notes,
+          review.scores_json,
+          review.confidence,
+          review.created_at,
+        );
+    } finally {
+      conn.close();
+    }
+    return review;
+  }
+
+  record_blueprint_review(
     threadId: string,
     artifactId: string,
     runId: string,
@@ -1033,7 +1225,7 @@ export class ProjectWorkspace {
   ): Record<string, unknown> {
     this.ensure_initialized();
     const review: Record<string, unknown> = {
-      review_id: newId("review"),
+      review_id: newId("blueprint_review"),
       thread_id: threadId,
       artifact_id: artifactId,
       run_id: runId,
@@ -1046,8 +1238,7 @@ export class ProjectWorkspace {
       conn
         .prepare(
           `
-          insert into idea_reviews(review_id, thread_id, artifact_id, run_id,
-                                   decision, notes, created_at)
+          insert into blueprint_reviews(review_id, thread_id, artifact_id, run_id, decision, notes, created_at)
           values (?, ?, ?, ?, ?, ?, ?)
           `,
         )
@@ -1064,6 +1255,27 @@ export class ProjectWorkspace {
       conn.close();
     }
     return review;
+  }
+
+  latest_blueprint_review(threadId: string): Record<string, unknown> | null {
+    this.ensure_initialized();
+    const conn = this.connect();
+    let row: SqlRow | undefined;
+    try {
+      row = conn
+        .prepare(
+          `
+          select * from blueprint_reviews
+          where thread_id = ?
+          order by created_at desc
+          limit 1
+          `,
+        )
+        .get(threadId) as SqlRow | undefined;
+    } finally {
+      conn.close();
+    }
+    return row ? {...row} : null;
   }
 
   latest_idea_review(threadId: string): Record<string, unknown> | null {
@@ -1556,6 +1768,48 @@ export class ProjectWorkspace {
         );
     } finally {
       conn.close();
+    }
+  }
+
+  private readingRequestPath(threadId: string): string {
+    const dir = path.join(this.workspaceDir, "thread-state");
+    fs.mkdirSync(dir, {recursive: true});
+    return path.join(dir, `${threadId}.reading.json`);
+  }
+
+  set_reading_request(
+    threadId: string,
+    request: {mode: "quick" | "guided" | "exam"; paper_id: string; query?: string},
+  ): void {
+    this.ensure_initialized();
+    this.get_thread(threadId);
+    fs.writeFileSync(this.readingRequestPath(threadId), JSON.stringify(request, null, 2) + "\n", "utf8");
+  }
+
+  get_reading_request(
+    threadId: string,
+  ): {mode: "quick" | "guided" | "exam"; paper_id: string; query?: string} | null {
+    this.ensure_initialized();
+    const filePath = this.readingRequestPath(threadId);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    const payload: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const record = payload as {mode?: string; paper_id?: string; query?: string};
+    if (!record.paper_id || !record.mode) {
+      return null;
+    }
+    return {
+      mode: record.mode as "quick" | "guided" | "exam",
+      paper_id: String(record.paper_id),
+      query: record.query ? String(record.query) : undefined,
+    };
+  }
+
+  clear_reading_request(threadId: string): void {
+    const filePath = this.readingRequestPath(threadId);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
   }
 }

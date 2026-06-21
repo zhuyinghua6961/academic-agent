@@ -5,6 +5,12 @@ import {
   ContextBuilder,
   MemoryManager,
   TraceRecorder,
+  defaultPlanBody,
+  readExtendedDraft,
+  readExtendedPlan,
+  writeExtendedResearchIdeaDraft,
+  writeDisagreementLog,
+  writeIdeaMetaReview,
 } from "@academic-agent/harness";
 import {
   ProviderError,
@@ -12,7 +18,7 @@ import {
   diagnosisFromText,
   type IdeaDiagnosisProvider,
 } from "@academic-agent/providers";
-import {createDefaultSearchEngine, getDefaultTools, type ToolRegistry} from "@academic-agent/search";
+import {createDefaultSearchEngine, type ToolRegistry} from "@academic-agent/search";
 import {
   SearchResponseSchema,
   type ConversationSummary,
@@ -21,10 +27,35 @@ import {
   type ModeRun,
   type ProviderRequest,
   type ProviderResponse,
+  type ResearchIdeaPlanBody,
   type ThreadMessage,
   utcNow,
 } from "@academic-agent/schemas";
 import {ProjectWorkspace} from "@academic-agent/workspace";
+
+import {getExtendedTools, type PlanToolContext} from "./tooling.js";
+import {loadConvergenceForThread} from "./convergence.js";
+import {classifyImpact} from "./impact.js";
+import {detectPlanIntent} from "./intent.js";
+import {recordIdeaVersionBranch} from "./branch.js";
+import {detectUserDisagreementLLM} from "./debate.js";
+import {
+  mergeSearchResultIntoClosestWork,
+  paperTitlesNeedingReading,
+  runAfterPaperSearchPipeline,
+} from "./literature-pipeline.js";
+import {nextLifecycleState, resumeLifecycleState, shouldPauseWorkflow} from "./lifecycle.js";
+import {
+  canPaperSearch,
+  createSearchBudgetState,
+  paperKey,
+  updateSearchBudgetFromResponse,
+} from "./search-budget.js";
+import {
+  SubagentHarness,
+  createHandoffPacket,
+} from "./subagent-harness.js";
+import {registerLiveSubagentInvokers} from "./subagent-invokers.js";
 
 import {
   buildArtifactContext,
@@ -37,10 +68,10 @@ import {
   conversationSummaryUserPrompt,
   type HistoryContextPacket,
 } from "./context.js";
+import {emitActivity} from "./activity-events.js";
 import {
   assistantSummary,
   extractToolCalls,
-  fallbackDiagnosis,
   fallbackTitle,
   fallbackTitleFromMessages,
   isPlaceholderTitle,
@@ -72,8 +103,8 @@ export class IdeaPlanRunner {
   readonly config: AgentConfig;
   readonly providerProfile;
   readonly provider: IdeaDiagnosisProvider;
-  readonly toolRegistry: ToolRegistry;
   readonly maxIterations: number;
+  readonly subagentHarness: SubagentHarness;
 
   constructor(workspace: ProjectWorkspace) {
     this.workspace = workspace;
@@ -84,8 +115,53 @@ export class IdeaPlanRunner {
     this.config = AgentConfig.load(workspace.projectRoot);
     this.providerProfile = this.config.profile("planner");
     this.provider = createIdeaDiagnosisProvider(this.providerProfile, this.config.env);
-    this.toolRegistry = getDefaultTools(createDefaultSearchEngine(this.config.search, this.config.env));
     this.maxIterations = this.providerProfile.max_agent_iterations;
+    this.subagentHarness = new SubagentHarness();
+    registerLiveSubagentInvokers(this.subagentHarness, workspace.projectRoot, [
+      "paper_reader",
+      "novelty_reviewer",
+      "research_mentor",
+      "candidate_reviewer",
+      "ac_meta_review",
+    ], workspace);
+  }
+
+  private loadThreadPlanBody(threadId: string): ResearchIdeaPlanBody {
+    const artifact = this.workspace.latest_plan_artifact_for_thread(threadId);
+    if (!artifact) {
+      return defaultPlanBody();
+    }
+    try {
+      if (artifact.artifact_type === "ResearchIdeaPlan") {
+        const [, plan] = readExtendedPlan(this.artifactManager, artifact.artifact_id);
+        return plan.body;
+      }
+      const [, draft] = readExtendedDraft(this.artifactManager, artifact.artifact_id);
+      return draft.body;
+    } catch {
+      return defaultPlanBody();
+    }
+  }
+
+  private buildToolRegistry(state: IdeaPlanState) {
+    const seenKeys = new Set(state.seen_paper_keys);
+    const humanRead = new Set(state.human_read_papers);
+    const planCtx: PlanToolContext = {
+      workspace: this.workspace,
+      artifactManager: this.artifactManager,
+      runId: state.run_id,
+      threadId: state.thread_id,
+      getPlanBody: () => state.plan_body,
+      setPlanBody: (body) => {
+        state.plan_body = body;
+      },
+      humanReadPapers: humanRead,
+    };
+    const registry = getExtendedTools(this.workspace, planCtx);
+    if (!canPaperSearch(state.search_budget)) {
+      return registry.withoutTool("paper_search");
+    }
+    return registry;
   }
 
   async create_run(idea: string, threadId: string | null = null): Promise<ModeRun> {
@@ -109,16 +185,72 @@ export class IdeaPlanRunner {
 
     this.workspace.update_run(run.run_id, "running");
     this.workspace.add_event(run.run_id, "run.running", {});
-    this.addActivity(
+    const ideaPreview =
+      run.input_idea.length > 72 ? `${run.input_idea.slice(0, 69).trimEnd()}...` : run.input_idea;
+    emitActivity(
+      this.workspace,
       run.run_id,
       "activity.started",
       "planning",
-      "我已收到这轮输入，先判断它如何更新当前 Idea Plan。",
+      `我已收到：「${ideaPreview}」`,
     );
 
     const history = this.workspace
       .list_messages(run.thread_id)
       .filter((message) => message.run_id !== runId);
+
+    let threadAtStart = this.workspace.get_thread(run.thread_id);
+    if (threadAtStart.lifecycle_state === "paused") {
+      const resumeConvergence = loadConvergenceForThread(this.workspace, run.thread_id);
+      const resumed = resumeLifecycleState("paused", resumeConvergence);
+      this.workspace.update_thread_workflow(run.thread_id, {lifecycle_state: resumed});
+      this.workspace.add_event(run.run_id, "plan.lifecycle.resume", {to: resumed});
+      threadAtStart = this.workspace.get_thread(run.thread_id);
+    }
+
+    const intent = detectPlanIntent(run.input_idea, history.length > 0);
+    if (history.length === 0) {
+      this.workspace.update_thread_workflow(run.thread_id, {
+        lifecycle_state:
+          intent === "lightweight_diagnosis" ? "lightweight_diagnosis" : "idea_understanding",
+      });
+    } else {
+      const priorBody = this.loadThreadPlanBody(run.thread_id);
+      try {
+        const impact = await classifyImpact(
+          this.workspace.projectRoot,
+          priorBody.main_claim || run.input_idea,
+          run.input_idea,
+        );
+        const thread = this.workspace.get_thread(run.thread_id);
+        if (impact === "Major" || impact === "Fatal") {
+          const previousDraft = this.workspace.latest_plan_artifact_for_thread(run.thread_id);
+          this.workspace.update_thread_workflow(run.thread_id, {
+            impact_level: impact,
+            idea_version: (thread.idea_version ?? 1) + 1,
+          });
+          if (previousDraft) {
+            recordIdeaVersionBranch(this.workspace, run.thread_id, {
+              parent_thread_id: run.thread_id,
+              parent_artifact_id: previousDraft.artifact_id,
+              impact_level: impact,
+              idea_version: (thread.idea_version ?? 1) + 1,
+              created_at: utcNow(),
+            });
+            this.workspace.add_event(run.run_id, "idea.version.branch", {
+              previous_artifact_id: previousDraft.artifact_id,
+              impact_level: impact,
+              idea_version: (thread.idea_version ?? 1) + 1,
+            });
+          }
+        } else if (impact !== "None") {
+          this.workspace.update_thread_workflow(run.thread_id, {impact_level: impact});
+        }
+      } catch (error) {
+        this.workspace.add_event(run.run_id, "impact.classify_failed", {error: String(error)});
+      }
+    }
+
     const artifactContext = buildArtifactContext(
       this.workspace,
       this.artifactManager,
@@ -200,7 +332,8 @@ export class IdeaPlanRunner {
         historyContext.persistent_summary_covered_until_ordinal,
     });
     if (historyContext.compacted) {
-      this.addActivity(
+      emitActivity(
+        this.workspace,
         run.run_id,
         "activity.completed",
         "context",
@@ -224,7 +357,17 @@ export class IdeaPlanRunner {
       iteration: 0,
       tool_calls: [],
       history_context: historyContext,
+      plan_body: this.loadThreadPlanBody(run.thread_id),
+      search_budget: createSearchBudgetState(run.run_id),
+      seen_paper_keys: [],
+      human_read_papers: [],
     };
+
+    const readingRequest = this.workspace.get_reading_request(run.thread_id);
+    if (readingRequest) {
+      await this.runPaperReaderSession(initialState, readingRequest);
+      this.workspace.clear_reading_request(run.thread_id);
+    }
 
     try {
       const result = await runAgentLoop(this, initialState);
@@ -280,8 +423,8 @@ export class IdeaPlanRunner {
 
     this.raiseIfCancelled(runId);
 
-    this.workspace.add_event(runId, "agent.thinking", {iteration});
-    this.addActivity(
+    emitActivity(
+      this.workspace,
       runId,
       iteration === 0 ? "activity.updated" : "activity.updated",
       "planning",
@@ -292,7 +435,7 @@ export class IdeaPlanRunner {
     );
 
     const messages = state.messages;
-    const tools = this.toolRegistry.getAllDefinitions();
+    const tools = this.buildToolRegistry(state).getAllDefinitions();
     const providerRequest = this.provider.buildAgentRequest(messages, tools);
 
     this.workspace.add_event(runId, "provider.requested", {
@@ -300,7 +443,7 @@ export class IdeaPlanRunner {
       model: providerRequest.model,
       profile: providerRequest.profile,
       request_id: providerRequest.request_id,
-      live: providerRequest.provider !== "mock",
+      live: true,
       iteration,
       reasoning_effort: this.providerProfile.reasoning_effort,
       reasoning_summary: this.providerProfile.reasoning_summary,
@@ -323,7 +466,7 @@ export class IdeaPlanRunner {
         profile: providerRequest.profile,
         cached_tokens: Number(cachedResponse.usage?.cache_read_tokens ?? 0),
       });
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.completed",
         "thinking",
@@ -331,7 +474,7 @@ export class IdeaPlanRunner {
         {provider: providerRequest.provider, model: providerRequest.model},
       );
     } else {
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.started",
         "thinking",
@@ -346,7 +489,7 @@ export class IdeaPlanRunner {
         model: providerRequest.model,
         profile: providerRequest.profile,
       });
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.completed",
         "thinking",
@@ -394,15 +537,11 @@ export class IdeaPlanRunner {
     });
 
     if (toolCalls.length > 0) {
-      this.workspace.add_event(runId, "decision.made", {
-        decision: "call_tools",
-        tool_names: toolCalls.map((toolCall) => toolCall.name),
-      });
-      this.addActivity(runId, "activity.updated", "deciding", toolDecisionMessage(toolCalls), {
+      emitActivity(this.workspace, runId, "activity.updated", "deciding", toolDecisionMessage(toolCalls), {
         tool_names: toolCalls.map((toolCall) => toolCall.name),
       });
     } else {
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.completed",
         "deciding",
@@ -425,11 +564,14 @@ export class IdeaPlanRunner {
     const threadId = state.thread_id;
     const toolCalls = state.tool_calls;
     const newMessages = [...state.messages];
+    const toolRegistry = this.buildToolRegistry(state);
+    const seenKeys = new Set(state.seen_paper_keys);
 
     for (const toolCall of toolCalls) {
       const callId = toolCall.call_id;
       const toolMessage = toolStartMessage(toolCall.name, toolCall.arguments);
-      this.addActivity(
+      emitActivity(
+        this.workspace,
         runId,
         "activity.started",
         toolCall.name === "paper_search" || toolCall.name === "web_search" ? "searching" : "acting",
@@ -440,23 +582,57 @@ export class IdeaPlanRunner {
           arguments: toolCall.arguments,
         },
       );
-      this.workspace.add_event(runId, "action.started", {
-        tool_name: toolCall.name,
-        tool_call_id: callId,
-        arguments: toolCall.arguments,
-      });
 
-      const result = await this.toolRegistry.execute(toolCall.name, toolCall.arguments);
+      const result = await toolRegistry.execute(toolCall.name, toolCall.arguments);
       const resultText = JSON.stringify(result);
       const resultSummary = toolResultSummary(toolCall.name, result);
+      const resultError = result.error;
+      const resultItems = result.results;
+      const hasResults = Array.isArray(resultItems) && resultItems.length > 0;
+      const isError = Boolean(resultError) && !hasResults;
 
       if (toolCall.name === "paper_search") {
+        emitActivity(
+          this.workspace,
+          runId,
+          "activity.completed",
+          "observing",
+          toolObservationMessage(toolCall.name, resultSummary, isError),
+          {
+            tool_name: toolCall.name,
+            tool_call_id: callId,
+            ...resultSummary,
+          },
+        );
         try {
-          const searchResponse = SearchResponseSchema.parse(result);
+          let searchResponse = SearchResponseSchema.parse(result);
+          searchResponse = await runAfterPaperSearchPipeline(
+            this.workspace,
+            this.artifactManager,
+            this.subagentHarness,
+            {
+              runId,
+              threadId,
+              planBody: state.plan_body,
+              searchResponse,
+            },
+          );
+          state.search_budget = updateSearchBudgetFromResponse(
+            state.search_budget,
+            searchResponse,
+            seenKeys,
+          );
+          for (const item of searchResponse.results) {
+            mergeSearchResultIntoClosestWork(state.plan_body, item);
+          }
           const [artifact] = this.artifactManager.write_paper_search_evidence(
             runId,
             searchResponse,
           );
+          const topTitles = searchResponse.results
+            .slice(0, 3)
+            .map((item) => String(item.title ?? "").trim())
+            .filter(Boolean);
           this.workspace.add_event(runId, "paper_search.evidence.created", {
             artifact_id: artifact.artifact_id,
             artifact_type: artifact.artifact_type,
@@ -464,6 +640,7 @@ export class IdeaPlanRunner {
             metadata_path: artifact.metadata_path,
             query: searchResponse.query,
             result_count: searchResponse.results.length,
+            top_titles: topTitles,
           });
         } catch (error) {
           this.workspace.add_event(runId, "paper_search.evidence.failed", {
@@ -489,32 +666,29 @@ export class IdeaPlanRunner {
         content: resultText,
       });
 
-      const resultError = result.error;
-      const resultItems = result.results;
-      const hasResults = Array.isArray(resultItems) && resultItems.length > 0;
-      const isError = Boolean(resultError) && !hasResults;
-      this.workspace.add_event(runId, "observation.summary", {
-        tool_name: toolCall.name,
-        tool_call_id: callId,
-        error: isError,
-        partial_error: Boolean(resultError) && hasResults,
-        result_length: resultText.length,
-        ...resultSummary,
-      });
-      this.addActivity(
-        runId,
-        "activity.completed",
-        "observing",
-        toolObservationMessage(toolCall.name, resultSummary, isError),
-        {
-          tool_name: toolCall.name,
-          tool_call_id: callId,
-          ...resultSummary,
-        },
-      );
+      if (toolCall.name !== "paper_search") {
+        emitActivity(
+          this.workspace,
+          runId,
+          "activity.completed",
+          "observing",
+          toolObservationMessage(toolCall.name, resultSummary, isError),
+          {
+            tool_name: toolCall.name,
+            tool_call_id: callId,
+            ...resultSummary,
+          },
+        );
+      }
     }
 
-    return {...state, messages: newMessages, tool_calls: []};
+    return {
+      ...state,
+      messages: newMessages,
+      tool_calls: [],
+      seen_paper_keys: [...seenKeys],
+      human_read_papers: [...state.human_read_papers],
+    };
   }
 
   async finalizeNode(state: IdeaPlanState): Promise<IdeaPlanState> {
@@ -555,7 +729,7 @@ export class IdeaPlanRunner {
       source_refs: context.source_refs,
       excluded_context_summary: context.excluded_context_summary,
     });
-    this.addActivity(
+    emitActivity(this.workspace,
       runId,
       "activity.completed",
       "context",
@@ -569,10 +743,10 @@ export class IdeaPlanRunner {
       history.length === 0,
       languageFromText(idea),
     );
-    this.addActivity(runId, "activity.started", "answering", "我开始把诊断流式输出给你。");
+    emitActivity(this.workspace,runId, "activity.started", "answering", "我开始把诊断流式输出给你。");
     this.workspace.add_event(runId, "assistant.reset", {reason: "final_answer"});
     await this.emitAssistantStream(runId, assistantContent);
-    this.addActivity(
+    emitActivity(this.workspace,
       runId,
       "activity.completed",
       "answering",
@@ -613,11 +787,21 @@ export class IdeaPlanRunner {
     this.raiseIfCancelled(runId);
 
     const traceRefs = [...(previousArtifact?.trace_refs ?? []), trace.trace_id];
-    const [artifact, draft] = this.artifactManager.write_research_idea_draft(
+    const body = {...state.plan_body};
+    body.main_claim = body.main_claim || diagnosis.candidate_mechanism;
+    body.mechanism_sketch = body.mechanism_sketch || diagnosis.candidate_mechanism;
+    body.falsification_condition = body.falsification_condition || diagnosis.main_uncertainty;
+    body.why_non_trivial = body.why_non_trivial || diagnosis.gap;
+    body.assumptions.to_verify = [
+      ...new Set([...body.assumptions.to_verify, ...diagnosis.evidence_needed]),
+    ];
+    const [artifact, draft] = writeExtendedResearchIdeaDraft(
+      this.artifactManager,
       runId,
       diagnosis,
       context,
       traceRefs,
+      body,
       previousArtifact?.artifact_id ?? null,
     );
     const artifactEventType = previousArtifact ? "artifact.updated" : "artifact.created";
@@ -628,6 +812,47 @@ export class IdeaPlanRunner {
       metadata_path: artifact.metadata_path,
     });
     this.refreshMemoryMap(runId);
+
+    const convergence = loadConvergenceForThread(this.workspace, run.thread_id);
+    const thread = this.workspace.get_thread(run.thread_id);
+    const miniReviewCount = this.workspace.count_thread_artifacts(run.thread_id, "PaperMiniReview");
+    const hookCount = this.workspace.count_thread_artifacts(run.thread_id, "InnovationHook");
+    const humanReadCount = state.human_read_papers.length;
+    const pause = shouldPauseWorkflow({
+      convergence,
+      searchBudgetExhausted: state.search_budget.budget_exhausted,
+      miniReviewCount,
+      humanReadCount,
+    });
+    const nextLifecycle = nextLifecycleState(thread.lifecycle_state ?? "lightweight_diagnosis", convergence, {
+      miniReviewCount,
+      hookCount,
+      hasIntake: convergence.checks.find((c) => c.id === "L1")?.satisfied ?? false,
+      paused: pause.paused,
+    });
+    if (pause.paused && pause.reason) {
+      this.workspace.add_message(run.thread_id, "assistant", `${pause.reason} 线程已暂停。`, runId);
+    }
+    if (nextLifecycle !== thread.lifecycle_state) {
+      this.workspace.update_thread_workflow(run.thread_id, {lifecycle_state: nextLifecycle});
+      this.workspace.add_event(runId, "plan.lifecycle.transition", {
+        from: thread.lifecycle_state,
+        to: nextLifecycle,
+      });
+    }
+
+    await this.runReviewPipeline(state, body, convergence, nextLifecycle, {
+      miniReviewCount,
+      hookCount,
+    });
+
+    if (await this.detectUserDisagreement(state.idea, body.main_claim)) {
+      try {
+        await this.runResearchMentor(state, body);
+      } catch (error) {
+        this.workspace.add_event(state.run_id, "research_mentor.failed", {error: String(error)});
+      }
+    }
 
     return {
       ...state,
@@ -654,16 +879,17 @@ export class IdeaPlanRunner {
       model: providerRequest.model,
       profile: providerRequest.profile,
     });
-    this.addActivity(
+    emitActivity(this.workspace,
       runId,
       "activity.updated",
       "thinking",
-      "planner 已进入流式输出；我会实时展示可见内容，隐藏推理链只保留为内部记录。",
+      "planner 正在推理…",
       {provider: providerRequest.provider, model: providerRequest.model},
     );
 
     let chunks = 0;
     let reasoningChunks = 0;
+    let toolCallDeltaChunks = 0;
     let finalResponse: ProviderResponse | null = null;
     try {
       for await (const chunk of stream) {
@@ -674,11 +900,6 @@ export class IdeaPlanRunner {
           if (!delta) {
             continue;
           }
-          this.workspace.add_event(runId, "assistant.delta", {
-            index: chunks,
-            delta,
-            source: "provider_stream",
-          });
           chunks += 1;
           continue;
         }
@@ -687,10 +908,7 @@ export class IdeaPlanRunner {
           continue;
         }
         if (chunkType === "tool_call_delta") {
-          this.workspace.add_event(runId, "provider.tool_call.delta", {
-            tool_count: (chunk.tool_calls ?? []).length,
-            source: "provider_stream",
-          });
+          toolCallDeltaChunks += 1;
           continue;
         }
         if (chunkType === "completed" && chunk.response) {
@@ -704,7 +922,7 @@ export class IdeaPlanRunner {
           model: providerRequest.model,
           error: String(error),
         });
-        this.addActivity(
+        emitActivity(this.workspace,
           runId,
           "activity.updated",
           "thinking",
@@ -720,26 +938,20 @@ export class IdeaPlanRunner {
       throw new ProviderError("Provider stream ended without a completed response.");
     }
 
-    if (chunks > 0) {
-      this.workspace.add_event(runId, "assistant.completed", {
-        chunks,
-        source: "provider_stream",
-        reasoning_chunks_hidden: reasoningChunks,
-      });
-    }
     this.workspace.add_event(runId, "provider.stream.completed", {
       provider: finalResponse.provider,
       model: finalResponse.model,
       response_id: finalResponse.response_id,
       chunks,
       reasoning_chunks_hidden: reasoningChunks,
+      tool_call_delta_chunks: toolCallDeltaChunks,
     });
     return finalResponse;
   }
 
   private async synthesizeFinalDiagnosis(state: IdeaPlanState, idea: string): Promise<Diagnosis> {
     const runId = state.run_id;
-    this.addActivity(
+    emitActivity(this.workspace,
       runId,
       "activity.updated",
       "synthesizing",
@@ -756,7 +968,7 @@ export class IdeaPlanRunner {
       model: request.model,
       profile: request.profile,
       request_id: request.request_id,
-      live: request.provider !== "mock",
+      live: true,
       phase: "final_synthesis",
     });
     try {
@@ -777,7 +989,7 @@ export class IdeaPlanRunner {
       });
       const content = String(response.output.content ?? "");
       const diagnosis = diagnosisFromText(content);
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.completed",
         "synthesizing",
@@ -786,13 +998,279 @@ export class IdeaPlanRunner {
       return diagnosis;
     } catch (error) {
       this.workspace.add_event(runId, "final_synthesis.failed", {error: String(error)});
-      this.addActivity(
+      emitActivity(this.workspace,
         runId,
         "activity.completed",
         "synthesizing",
-        "最终诊断收束失败，将使用保底诊断并提示重新运行。",
+        "最终诊断收束失败，请检查 provider 配置后重试。",
       );
-      return fallbackDiagnosis(idea);
+      throw error;
+    }
+  }
+
+  private async runPaperReaderSession(
+    state: IdeaPlanState,
+    request: {mode: "quick" | "guided" | "exam"; paper_id: string; query?: string},
+  ): Promise<void> {
+    const packet = createHandoffPacket({
+      threadId: state.thread_id,
+      runId: state.run_id,
+      role: "paper_reader",
+      task: `Read paper in ${request.mode} mode and produce PaperReadingReport.`,
+      payload: {paper_id: request.paper_id, query: request.query ?? "", mode: request.mode},
+      outputSchema: "PaperReadingReport",
+    });
+    this.workspace.add_event(state.run_id, "subagent.handoff", {
+      role: packet.role,
+      packet_id: packet.packet_id,
+      reading_mode: request.mode,
+    });
+    const report = await this.subagentHarness.invoke(packet);
+    this.workspace.add_event(state.run_id, "subagent.report", {
+      role: report.role,
+      status: report.status,
+      packet_id: report.packet_id,
+    });
+    if (report.status !== "completed") {
+      return;
+    }
+    const output = report.output as {
+      problem?: string;
+      mechanism?: string;
+      evidence?: string;
+      limitation?: string;
+    };
+    const {writePaperMiniReview, markPaperHumanRead, findManifestEntryByPaperId} =
+      await import("@academic-agent/harness");
+    writePaperMiniReview(this.artifactManager, state.run_id, {
+      source_run_id: state.run_id,
+      paper_id: request.paper_id,
+      title: request.paper_id,
+      status: "unknown",
+      summary: [output.problem, output.mechanism, output.evidence].filter(Boolean).join("\n"),
+      strengths: output.evidence ? [String(output.evidence)] : [],
+      weaknesses: output.limitation ? [String(output.limitation)] : [],
+      questions: [],
+      confidence: request.mode === "exam" ? "high" : "medium",
+      innovation_hooks: [],
+      novelty_risk_for_idea: String(output.limitation ?? ""),
+    });
+    if (findManifestEntryByPaperId(this.workspace, request.paper_id)) {
+      markPaperHumanRead(this.workspace, request.paper_id);
+    }
+    state.human_read_papers.push(request.paper_id);
+  }
+
+  private shouldRunNoveltyReview(state: IdeaPlanState): boolean {
+    const hooks = this.workspace.count_thread_artifacts(state.thread_id, "InnovationHook");
+    const reviews = this.workspace.count_thread_artifacts(state.thread_id, "PaperMiniReview");
+    return hooks < 1 && reviews >= 1;
+  }
+
+  private async runReviewPipeline(
+    state: IdeaPlanState,
+    body: ResearchIdeaPlanBody,
+    convergence: ReturnType<typeof loadConvergenceForThread>,
+    lifecycle: import("@academic-agent/schemas").LifecycleState,
+    counts: {miniReviewCount: number; hookCount: number},
+  ): Promise<void> {
+    if (
+      lifecycle === "human_agent_reading" ||
+      (counts.miniReviewCount < 3 && body.closest_related_work.length > 0)
+    ) {
+      await this.autoSchedulePaperReading(state, body);
+    }
+
+    if (counts.hookCount < 1 && counts.miniReviewCount >= 1) {
+      const {autoExtractInnovationHooks} = await import("./literature-pipeline.js");
+      await autoExtractInnovationHooks(this.workspace, this.artifactManager, this.subagentHarness, {
+        runId: state.run_id,
+        threadId: state.thread_id,
+        mainClaim: body.main_claim,
+        planBody: body,
+      });
+    }
+
+    const refreshed = loadConvergenceForThread(this.workspace, state.thread_id);
+    const miniReviews = this.workspace.count_thread_artifacts(state.thread_id, "PaperMiniReview");
+    if (
+      miniReviews >= 3 &&
+      refreshed.can_enter_candidate_review &&
+      lifecycle === "candidate_idea_review"
+    ) {
+      await this.maybeRunCandidateReview(state, body);
+    }
+
+    if (this.shouldRunNoveltyReview(state)) {
+      await this.runNoveltyReviewBatch(state, body);
+    }
+  }
+
+  private async autoSchedulePaperReading(
+    state: IdeaPlanState,
+    body: ResearchIdeaPlanBody,
+  ): Promise<void> {
+    const targets = paperTitlesNeedingReading(
+      this.workspace,
+      state.thread_id,
+      body.closest_related_work,
+      3,
+    );
+    if (targets.length === 0) {
+      return;
+    }
+    this.workspace.add_event(state.run_id, "agent.fanout.started", {
+      phase: "auto_paper_reading",
+      count: targets.length,
+    });
+    for (const paper of targets) {
+      await this.runPaperReaderSession(state, {
+        mode: "guided",
+        paper_id: paper.paper_id ?? paper.title,
+        query: paper.title,
+      });
+    }
+    this.workspace.add_event(state.run_id, "agent.fanout.completed", {
+      phase: "auto_paper_reading",
+      count: targets.length,
+    });
+  }
+
+  private async detectUserDisagreement(userMessage: string, agentClaim: string): Promise<boolean> {
+    try {
+      return await detectUserDisagreementLLM(this.workspace.projectRoot, userMessage, agentClaim);
+    } catch {
+      return false;
+    }
+  }
+
+  async runResearchMentorForThread(
+    threadId: string,
+    runId: string,
+    userMessage: string,
+    agentClaim: string,
+  ): Promise<void> {
+    const state = {
+      run_id: runId,
+      thread_id: threadId,
+      idea: userMessage,
+    } as IdeaPlanState;
+    await this.runResearchMentor(state, {main_claim: agentClaim} as ResearchIdeaPlanBody);
+  }
+
+  private async runNoveltyReviewBatch(
+    state: IdeaPlanState,
+    body: ResearchIdeaPlanBody,
+  ): Promise<void> {
+    const papers = body.closest_related_work.slice(0, 3);
+    const packets = papers.map((paper) =>
+      createHandoffPacket({
+        threadId: state.thread_id,
+        runId: state.run_id,
+        role: "novelty_reviewer",
+        task: `Assess novelty risk relative to ${paper.title}`,
+        payload: {paper, main_claim: body.main_claim},
+        outputSchema: "NoveltyReviewReport",
+      }),
+    );
+    if (packets.length === 0) {
+      return;
+    }
+    this.workspace.add_event(state.run_id, "agent.fanout.started", {
+      roles: packets.map((packet) => packet.role),
+      count: packets.length,
+    });
+    const reports = await this.subagentHarness.invokeParallel(packets);
+    for (const report of reports) {
+      this.workspace.add_event(state.run_id, "subagent.report", {
+        role: report.role,
+        status: report.status,
+        packet_id: report.packet_id,
+      });
+    }
+  }
+
+  private async runResearchMentor(
+    state: IdeaPlanState,
+    body: ResearchIdeaPlanBody,
+  ): Promise<void> {
+    const packet = createHandoffPacket({
+      threadId: state.thread_id,
+      runId: state.run_id,
+      role: "research_mentor",
+      task: "Turn user disagreement into an evidence question.",
+      payload: {user_message: state.idea, main_claim: body.main_claim},
+      outputSchema: "MentorChallengeReport",
+    });
+    const report = await this.subagentHarness.invoke(packet);
+    if (report.status === "completed") {
+      const output = report.output as {
+        evidence_question?: string;
+        impact_level?: string;
+      };
+      writeDisagreementLog(this.artifactManager, state.run_id, {
+        source_run_id: state.run_id,
+        topic: "User-agent disagreement",
+        user_position: state.idea,
+        agent_position: body.main_claim,
+        verification_task: String(output.evidence_question ?? ""),
+        impact_on_idea_version: (output.impact_level as "Minor" | "Major" | "Fatal") ?? "Minor",
+        status: "open",
+        evidence_for_user: [],
+        evidence_for_agent: [],
+        current_resolution: "",
+      });
+    }
+  }
+
+  private async maybeRunCandidateReview(
+    state: IdeaPlanState,
+    body: ResearchIdeaPlanBody,
+  ): Promise<void> {
+    const packet = createHandoffPacket({
+      threadId: state.thread_id,
+      runId: state.run_id,
+      role: "candidate_reviewer",
+      task: "Review candidate idea and produce five-dimension scores with Advance/Revise/Provisional decision.",
+      payload: {main_claim: body.main_claim, mechanism_sketch: body.mechanism_sketch},
+      outputSchema: "CandidateIdeaReview",
+    });
+    this.workspace.add_event(state.run_id, "subagent.handoff", {
+      role: packet.role,
+      packet_id: packet.packet_id,
+    });
+    const report = await this.subagentHarness.invoke(packet);
+    this.workspace.add_event(state.run_id, "subagent.report", {
+      role: report.role,
+      status: report.status,
+      packet_id: report.packet_id,
+    });
+    if (report.status === "completed" && report.output.scores) {
+      const output = report.output as {
+        decision?: string;
+        confidence?: string;
+        scores?: Record<string, number>;
+        why_not_engineering_stitching?: string;
+        summary?: string;
+      };
+      if (output.why_not_engineering_stitching) {
+        body.why_not_engineering_stitching = output.why_not_engineering_stitching;
+      } else if (!body.why_not_engineering_stitching.trim()) {
+        body.why_not_engineering_stitching =
+          "CandidateReviewer did not document stitching risks; defaulting to mechanism-level novelty claim.";
+      }
+      const artifact = this.workspace.latest_plan_artifact_for_thread(state.thread_id);
+      if (artifact && output.decision) {
+        this.workspace.record_idea_review(
+          state.thread_id,
+          artifact.artifact_id,
+          artifact.source_run_id,
+          output.decision,
+          String(output.summary ?? "CandidateReviewer agent review"),
+          output.scores as import("@academic-agent/schemas").ReviewScores,
+          (output.confidence as "high" | "medium" | "low") ?? "medium",
+        );
+      }
     }
   }
 
@@ -802,28 +1280,23 @@ export class IdeaPlanRunner {
     }
   }
 
-  private addActivity(
-    runId: string,
-    eventType: string,
-    stage: string,
-    message: string,
-    payload: Record<string, unknown> = {},
-  ): void {
-    this.workspace.add_event(runId, eventType, {stage, message, ...payload});
-  }
-
   private async emitAssistantStream(runId: string, content: string): Promise<void> {
-    const chunks = streamChunks(content);
+    const chunks = streamChunks(content, 320);
     for (const [index, chunk] of chunks.entries()) {
       this.raiseIfCancelled(runId);
-      this.workspace.add_event(runId, "assistant.delta", {index, delta: chunk});
-      if (chunks.length > 1) {
+      this.workspace.add_event(runId, "assistant.delta", {
+        index,
+        delta: chunk,
+        source: "final_answer",
+      });
+      if (chunks.length > 1 && index < chunks.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 3));
       }
     }
     this.workspace.add_event(runId, "assistant.completed", {
       chunks: chunks.length,
       length: content.length,
+      source: "final_answer",
     });
   }
 
@@ -843,7 +1316,7 @@ export class IdeaPlanRunner {
     historyContext: HistoryContextPacket,
   ): Promise<ConversationSummary> {
     const extractorProfile = this.config.profile("extractor");
-    if (extractorProfile.provider === "mock") {
+    if (extractorProfile.provider === "openai_compatible" && !extractorProfile.base_url) {
       return summary;
     }
     this.workspace.add_event(runId, "memory.summary.refine_requested", {
@@ -942,6 +1415,63 @@ export class IdeaPlanRunner {
     return fallback;
   }
 
+  async runAcMetaReview(
+    threadId: string,
+    runId: string,
+    draft: import("@academic-agent/schemas").ExtendedResearchIdeaPlanDraft,
+  ) {
+    const convergence = loadConvergenceForThread(this.workspace, threadId);
+    const packet = createHandoffPacket({
+      threadId,
+      runId,
+      role: "ac_meta_review",
+      task: "Produce AC meta-review with can_freeze decision.",
+      payload: {
+        main_claim: draft.body.main_claim,
+        diagnosis: draft.diagnosis,
+        convergence,
+      },
+      outputSchema: "IdeaMetaReview",
+    });
+    this.workspace.add_event(runId, "subagent.handoff", {
+      role: packet.role,
+      packet_id: packet.packet_id,
+    });
+    const report = await this.subagentHarness.invoke(packet);
+    this.workspace.add_event(runId, "subagent.report", {
+      role: report.role,
+      status: report.status,
+      packet_id: report.packet_id,
+    });
+    if (report.status !== "completed") {
+      throw new Error(report.error ?? "AC meta-review failed");
+    }
+    const output = report.output as Record<string, unknown>;
+    const [metaArtifact, meta] = writeIdeaMetaReview(this.artifactManager, runId, {
+      source_run_id: runId,
+      candidate: String(output.candidate ?? draft.body.main_claim),
+      decision: (output.decision as import("@academic-agent/schemas").ReviewDecision) ?? "Revise",
+      confidence: (output.confidence as "high" | "medium" | "low") ?? "medium",
+      evidence_summary: String(output.evidence_summary ?? draft.diagnosis.gap),
+      closest_related_work: String(output.closest_related_work ?? ""),
+      main_disagreements: Array.isArray(output.main_disagreements)
+        ? output.main_disagreements.map(String)
+        : [],
+      resolution_of_disagreements: String(output.resolution_of_disagreements ?? ""),
+      remaining_risks: Array.isArray(output.remaining_risks)
+        ? output.remaining_risks.map(String)
+        : [],
+      why_not_engineering_stitching: String(
+        output.why_not_engineering_stitching ?? draft.body.why_not_engineering_stitching,
+      ),
+      conditions_for_freeze: Array.isArray(output.conditions_for_freeze)
+        ? output.conditions_for_freeze.map(String)
+        : [],
+      can_freeze: Boolean(output.can_freeze),
+    });
+    return {artifact: metaArtifact, meta_review: meta};
+  }
+
   async auto_rename_thread(threadId: string): Promise<string> {
     this.workspace.get_thread(threadId);
     const messages = this.workspace
@@ -957,9 +1487,23 @@ export class IdeaPlanRunner {
       diagnosis =
         latestAssistant !== null
           ? diagnosisFromText(latestAssistant.content)
-          : fallbackDiagnosis(idea);
+          : {
+              problem: idea,
+              gap: "",
+              candidate_mechanism: "",
+              evidence_needed: [],
+              main_uncertainty: "",
+              clarifying_questions: [],
+            };
     } catch {
-      diagnosis = fallbackDiagnosis(idea);
+      diagnosis = {
+        problem: idea,
+        gap: "",
+        candidate_mechanism: "",
+        evidence_needed: [],
+        main_uncertainty: "",
+        clarifying_questions: [],
+      };
     }
     let title: string;
     try {

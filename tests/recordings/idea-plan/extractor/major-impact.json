@@ -1,0 +1,11 @@
+{
+  "output": {
+    "content": "{\"impact_level\":\"Major\",\"reason\":\"User pivots to a different mechanism family.\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {
+    "input_tokens": 60,
+    "output_tokens": 24
+  }
+}

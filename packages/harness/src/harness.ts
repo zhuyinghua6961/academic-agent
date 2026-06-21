@@ -9,8 +9,8 @@ import {
   PaperSearchEvidenceSchema,
   ProjectMemoryMapSchema,
   ProviderResponseSchema,
-  ResearchIdeaPlanDraftSchema,
-  ResearchIdeaPlanSchema,
+  type ExtendedResearchIdeaPlan,
+  type ExtendedResearchIdeaPlanDraft,
   newId,
   utcNow,
   type AppCacheRecord,
@@ -27,12 +27,13 @@ import {
   type ProviderRequest,
   type ProviderResponse,
   type ResearchIdeaPlan,
-  type ResearchIdeaPlanDraft,
   type SearchResponse,
   type ThreadSessionSummary,
   type TraceRecord,
 } from "@academic-agent/schemas";
 import { ProjectWorkspace } from "@academic-agent/workspace";
+
+import { readExtendedDraft, readExtendedPlan, defaultPlanBody } from "./extended-artifacts.js";
 
 const MEMORY_TOKEN_RE = /[\w\u4e00-\u9fff]+/gu;
 
@@ -920,7 +921,7 @@ export class ArtifactManager {
     context: ContextPacket,
     trace_refs: string[],
     artifact_id: string | null = null,
-  ): [ArtifactMetadata, ResearchIdeaPlanDraft] {
+  ): [ArtifactMetadata, ExtendedResearchIdeaPlanDraft] {
     this.workspace.ensure_initialized();
     const next_artifact_id = artifact_id ?? newId("artifact");
     const title = "ResearchIdeaPlanDraft";
@@ -951,11 +952,12 @@ export class ArtifactManager {
       trace_refs,
       created_at,
     };
-    const draft: ResearchIdeaPlanDraft = {
+    const draft: ExtendedResearchIdeaPlanDraft = {
       artifact_id: next_artifact_id,
       title,
       source_run_id: run_id,
       diagnosis,
+      body: defaultPlanBody(),
       context_id: context.context_id,
       markdown_path,
       metadata_path,
@@ -975,16 +977,17 @@ export class ArtifactManager {
     return [metadata, content];
   }
 
-  read_research_idea_draft(artifact_id: string): [ArtifactMetadata, ResearchIdeaPlanDraft] {
-    const metadata = this.workspace.get_artifact_metadata(artifact_id);
-    const payload: unknown = JSON.parse(fs.readFileSync(metadata.metadata_path, "utf8"));
-    const record = payload as { draft?: unknown };
-    return [metadata, ResearchIdeaPlanDraftSchema.parse(record.draft)];
+  read_research_idea_draft(artifact_id: string): [ArtifactMetadata, ExtendedResearchIdeaPlanDraft] {
+    return readExtendedDraft(this, artifact_id);
+  }
+
+  read_research_idea_plan(artifact_id: string): [ArtifactMetadata, ExtendedResearchIdeaPlan] {
+    return readExtendedPlan(this, artifact_id);
   }
 
   freeze_research_idea_plan(
     source_metadata: ArtifactMetadata,
-    draft: ResearchIdeaPlanDraft,
+    draft: ExtendedResearchIdeaPlanDraft,
   ): [ArtifactMetadata, ResearchIdeaPlan] {
     this.workspace.ensure_initialized();
     const frozen_at = utcNow();
@@ -998,6 +1001,7 @@ export class ArtifactManager {
       source_run_id: draft.source_run_id,
       title: "ResearchIdeaPlan",
       diagnosis: draft.diagnosis,
+      body: draft.body,
       context_id: draft.context_id,
       markdown_path,
       metadata_path,
@@ -1024,13 +1028,6 @@ export class ArtifactManager {
     });
     this.workspace.insert_artifact(metadata);
     return [metadata, plan];
-  }
-
-  read_research_idea_plan(artifact_id: string): [ArtifactMetadata, ResearchIdeaPlan] {
-    const metadata = this.workspace.get_artifact_metadata(artifact_id);
-    const payload: unknown = JSON.parse(fs.readFileSync(metadata.metadata_path, "utf8"));
-    const record = payload as { plan?: unknown };
-    return [metadata, ResearchIdeaPlanSchema.parse(record.plan)];
   }
 
   write_paper_search_evidence(

@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"metric_validity\":\"Metrics align with claim\",\"metric_risks\":[],\"recommendations\":[]}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 40, "output_tokens": 20}
+}

@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"evidence_question\":\"Can you cite a paper showing the gap?\",\"recommended_experiment\":\"Compare against X baseline\",\"impact_level\":\"Minor\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 30, "output_tokens": 20}
+}

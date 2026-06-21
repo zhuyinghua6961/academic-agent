@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"problem\":\"Conditional image generation\",\"method\":\"Cross-attention injection\",\"claim\":\"Text controls spatial layout\",\"limitation\":\"Mode collapse on rare prompts\",\"strengths\":[\"Clear mechanism\"],\"weaknesses\":[\"Engineering-heavy stitching risk\"],\"innovation_hooks\":[\"Better cross-attention\"],\"novelty_risk_for_idea\":\"high\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 50, "output_tokens": 30}
+}

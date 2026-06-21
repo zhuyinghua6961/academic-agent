@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"problem\":\"Training stability for diffusion\",\"method\":\"Noise schedule optimization\",\"claim\":\"Improved FID with fewer steps\",\"limitation\":\"Dataset-specific tuning\",\"strengths\":[\"Reproducible\"],\"weaknesses\":[\"Incremental over prior schedulers\"],\"innovation_hooks\":[\"Adaptive schedules\"],\"novelty_risk_for_idea\":\"low\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 50, "output_tokens": 30}
+}

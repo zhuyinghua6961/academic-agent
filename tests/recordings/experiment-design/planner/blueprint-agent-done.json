@@ -1,0 +1,11 @@
+{
+  "output": {
+    "content": "Blueprint draft ready for reviewer fan-out.",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {
+    "input_tokens": 50,
+    "output_tokens": 20
+  }
+}

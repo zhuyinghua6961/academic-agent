@@ -1,5 +1,11 @@
 import type {SearchConfig} from "@academic-agent/config";
-import type {PaperSearchSort, SearchResponse, SearchResult, SearchSource} from "@academic-agent/schemas";
+import type {
+  PaperSearchSort,
+  PublicationStatus,
+  SearchResponse,
+  SearchResult,
+  SearchSource,
+} from "@academic-agent/schemas";
 import {utcNow} from "@academic-agent/schemas";
 
 export const SEARCH_USER_AGENT = "academic-agent/0.1.0";
@@ -421,7 +427,10 @@ export class SearchEngine {
     return {
       query,
       source: responseSource,
-      results,
+      results:
+        responseSource === "paper_search"
+          ? rankPaperSearchResults(annotatePublicationStatus(results)).slice(0, normalizedLimit)
+          : results,
       retrieved_at: utcNow(),
       error: errors.length > 0 ? errors.join(" | ") : null,
     };
@@ -604,6 +613,136 @@ function mergeSearchResults(results: SearchResult[], maxResults: number): Search
   return merged;
 }
 
+const TOP_TIER_VENUE_HINTS = [
+  "neurips",
+  "nips",
+  "icml",
+  "iclr",
+  "cvpr",
+  "iccv",
+  "eccv",
+  "acl",
+  "emnlp",
+  "naacl",
+  "aaai",
+  "ijcai",
+  "kdd",
+  "www",
+  "sigir",
+  "nature",
+  "science",
+  "jmlr",
+];
+
+function openalexVenueName(item: JsonObject): string {
+  const primaryLocation = item.primary_location;
+  if (primaryLocation && typeof primaryLocation === "object" && !Array.isArray(primaryLocation)) {
+    const source = (primaryLocation as JsonObject).source;
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      const name = (source as JsonObject).display_name;
+      if (typeof name === "string" && name) {
+        return name;
+      }
+    }
+  }
+  return "";
+}
+
+export function inferArxivPublicationStatus(input: {
+  journal_ref?: string | null;
+  doi?: string | null;
+  comment?: string | null;
+}): PublicationStatus {
+  const journal = String(input.journal_ref ?? "").trim();
+  const comment = String(input.comment ?? "").toLowerCase();
+  if (journal) {
+    if (/accepted|to appear|in press/i.test(comment)) {
+      return "accepted";
+    }
+    return "published";
+  }
+  if (input.doi) {
+    return "published";
+  }
+  if (/accepted|to appear|camera ready/i.test(comment)) {
+    return "accepted";
+  }
+  return "preprint";
+}
+
+export function inferOpenalexPublicationStatus(item: JsonObject): PublicationStatus {
+  const type = String(item.type ?? "").toLowerCase();
+  if (type === "article" || type === "review" || type === "book-chapter") {
+    return "published";
+  }
+  if (type === "preprint" || type === "posted-content") {
+    return "preprint";
+  }
+  const venue = openalexVenueName(item).toLowerCase();
+  if (venue.includes("arxiv")) {
+    return "preprint";
+  }
+  return "unknown";
+}
+
+export function annotatePublicationStatus(results: SearchResult[]): SearchResult[] {
+  return results.map((result) => {
+    if (result.publication_status) {
+      return result;
+    }
+    if (result.source === "arxiv") {
+      const metadata = result.metadata ?? {};
+      return {
+        ...result,
+        publication_status: inferArxivPublicationStatus({
+          journal_ref: String(metadata.journal_ref ?? ""),
+          doi: String(metadata.doi ?? ""),
+          comment: String(metadata.comment ?? ""),
+        }),
+        venue: (result.venue ?? String(metadata.journal_ref ?? "")) || "arXiv",
+      };
+    }
+    if (result.source === "openalex") {
+      return {
+        ...result,
+        publication_status: inferOpenalexPublicationStatus(result.metadata ?? {}),
+        venue: result.venue ?? String(result.metadata?.venue ?? ""),
+      };
+    }
+    return {...result, publication_status: "unknown" as PublicationStatus};
+  });
+}
+
+export function venueRankScore(result: SearchResult): number {
+  const venue = String(result.venue ?? result.metadata?.journal_ref ?? "").toLowerCase();
+  let score = 0;
+  for (const hint of TOP_TIER_VENUE_HINTS) {
+    if (venue.includes(hint)) {
+      score += 40;
+      break;
+    }
+  }
+  const status = result.publication_status ?? "unknown";
+  if (status === "published") score += 30;
+  else if (status === "accepted") score += 20;
+  else if (status === "preprint") score += 10;
+  const yearMatch = String(result.published_at ?? result.metadata?.publication_year ?? "").match(
+    /(20\d{2})/,
+  );
+  if (yearMatch) {
+    score += Math.max(0, Number(yearMatch[1]) - 2015);
+  }
+  const citations = Number(result.metadata?.cited_by_count ?? 0);
+  if (Number.isFinite(citations) && citations > 0) {
+    score += Math.min(20, Math.log10(citations + 1) * 5);
+  }
+  return score;
+}
+
+export function rankPaperSearchResults(results: SearchResult[]): SearchResult[] {
+  return [...results].sort((left, right) => venueRankScore(right) - venueRankScore(left));
+}
+
 export function parseArxivFeed(feedText: string, retrievedAt?: string): SearchResult[] {
   const timestamp = retrievedAt ?? utcNow();
   const results: SearchResult[] = [];
@@ -636,6 +775,8 @@ export function parseArxivFeed(feedText: string, retrievedAt?: string): SearchRe
         published_at: extractTagText(entry, "published") || null,
         updated_at: extractTagText(entry, "updated") || null,
         pdf_url: pdfUrl,
+        publication_status: inferArxivPublicationStatus({journal_ref: journalRef, doi, comment}),
+        venue: journalRef || "arXiv",
         metadata: {
           backend: "arxiv",
           primary_category: primaryCategoryMatch?.[1] ?? null,
@@ -676,6 +817,7 @@ export function parseOpenalexWorks(
     const authors = openalexAuthors(item);
     const abstract = abstractFromOpenalex(item.abstract_inverted_index);
     const pdfUrl = openalexPdfUrl(item);
+    const venue = openalexVenueName(item);
     results.push({
       source: "openalex",
       title,
@@ -687,6 +829,8 @@ export function parseOpenalexWorks(
       published_at: String(item.publication_date ?? "") || null,
       updated_at: String(item.updated_date ?? "") || null,
       pdf_url: pdfUrl,
+      publication_status: inferOpenalexPublicationStatus(item),
+      venue,
       metadata: {
         backend: "openalex",
         query,
@@ -694,6 +838,8 @@ export function parseOpenalexWorks(
         cited_by_count: item.cited_by_count,
         publication_year: item.publication_year,
         openalex_id: openalexId || null,
+        venue,
+        type: item.type,
       },
     });
   }

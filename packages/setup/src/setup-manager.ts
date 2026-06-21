@@ -145,7 +145,7 @@ export class SetupManager {
     const state = config.setup_state();
     const planner = config.planner_or_none();
     const plannerCandidate =
-      planner && planner.provider !== "mock"
+      planner
         ? {
             provider: planner.provider as SetupLlmCandidate["provider"],
             model: planner.model,

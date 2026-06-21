@@ -56,6 +56,8 @@ function patchProjectConfig(
     planner.base_url = candidate.base_url;
   }
   providers.planner = planner;
+  providers.reviewer = {...planner, profile: "reviewer"};
+  providers.extractor = {...planner, profile: "extractor"};
   doc.providers = providers;
 
   const search = (doc.search as JsonObject | undefined) ?? {};

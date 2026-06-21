@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import React, {memo, useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {Box, Text, render, useApp, useInput} from "ink";
+import {activityFromEvent, type ActivityEntry} from "@academic-agent/agent-core";
 import {AcademicAgentClient, isConfigurationRequired} from "./client.js";
 import {SetupWizard} from "./setup-wizard.js";
 import type {
@@ -22,9 +23,16 @@ import type {
   SSEEvent,
   StartIdeaPlanRunResponse,
   ReviewIdeaPlanResponse,
+  ReviewIdeaPlanRequest,
   SetupStatusResponse,
   ThreadContextResponse,
 } from "@academic-agent/schemas";
+import {
+  formatConvergence,
+  helpText,
+  parseSlashCommand,
+  slashSuggestion,
+} from "./slash-commands.js";
 
 type Args = {
   projectRoot: string;
@@ -36,37 +44,128 @@ type Args = {
 };
 
 type UiState = "setup-loading" | "setup" | "input" | "loading" | "running" | "completed" | "resume-list" | "error";
-type SlashCommand =
-  | "new"
-  | "resume"
-  | "rename"
-  | "plan"
-  | "artifact"
-  | "context"
-  | "freeze"
-  | "review"
-  | "cache"
-  | "clear-cache"
-  | "config"
-  | "quit";
+
+const ACTIVITY_PREVIEW_LIMIT = 12;
+
+const STAGE_LABELS: Record<string, string> = {
+  planning: "规划",
+  thinking: "推理",
+  deciding: "决策",
+  searching: "检索",
+  observing: "结果",
+  reading: "精读",
+  literature: "文献",
+  evidence: "证据",
+  context: "上下文",
+  answering: "回答",
+  synthesizing: "收束",
+  acting: "工具",
+  working: "进行",
+  error: "错误",
+};
+
+const visibleActivities = (activities: ActivityEntry[], expanded: boolean): ActivityEntry[] =>
+  expanded || activities.length <= ACTIVITY_PREVIEW_LIMIT
+    ? activities
+    : activities.slice(-ACTIVITY_PREVIEW_LIMIT);
+
+function createBatchedRunEventHandler(options: {
+  setActivities: (activities: ActivityEntry[]) => void;
+  setAssistantDraft: React.Dispatch<React.SetStateAction<string>>;
+  setStepCount: (count: number) => void;
+  flushMs?: number;
+}) {
+  const runActivities: ActivityEntry[] = [];
+  let pendingAssistantDelta = "";
+  let pendingAssistantReset = false;
+  let dirtyActivities = false;
+  let assistantStreamUnlocked = false;
+  let flushTimer: NodeJS.Timeout | null = null;
+  const flushMs = options.flushMs ?? LIVE_UI_FLUSH_MS;
+
+  const flush = () => {
+    flushTimer = null;
+    if (pendingAssistantReset) {
+      options.setAssistantDraft("");
+      pendingAssistantReset = false;
+      pendingAssistantDelta = "";
+    } else if (pendingAssistantDelta.length > 0) {
+      const nextDelta = pendingAssistantDelta;
+      pendingAssistantDelta = "";
+      options.setAssistantDraft((current) => `${current}${nextDelta}`);
+    }
+    if (dirtyActivities) {
+      options.setActivities([...runActivities]);
+      options.setStepCount(runActivities.length);
+      dirtyActivities = false;
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (flushTimer) {
+      return;
+    }
+    flushTimer = setTimeout(flush, flushMs);
+  };
+
+  const onEvent = (event: SSEEvent) => {
+    const activity = activityFromEvent(event);
+    if (activity) {
+      runActivities.push(activity);
+      dirtyActivities = true;
+    }
+    if (isFinalAnswerReset(event)) {
+      assistantStreamUnlocked = true;
+      pendingAssistantDelta = "";
+      pendingAssistantReset = true;
+    } else if (isUserVisibleAssistantDelta(event, assistantStreamUnlocked)) {
+      const delta = String(event.payload?.delta ?? "");
+      if (delta) {
+        pendingAssistantDelta += delta;
+      }
+    }
+    scheduleFlush();
+  };
+
+  return {
+    onEvent,
+    flush,
+    dispose: () => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+      }
+    },
+    getRunActivities: () => runActivities,
+  };
+}
+
+const activityStreamFooter = (
+  activities: ActivityEntry[],
+  expanded: boolean,
+): string => {
+  const total = activities.length;
+  if (total === 0) {
+    return "";
+  }
+  const shown = visibleActivities(activities, expanded).length;
+  if (total <= ACTIVITY_PREVIEW_LIMIT) {
+    return `共 ${total} 步`;
+  }
+  if (expanded) {
+    return `已展开全部 ${total} 步 · 按 e 收起`;
+  }
+  return `显示最近 ${shown} / ${total} 步 · 按 e 展开`;
+};
 
 type TranscriptEntry =
   | {id: string; kind: "message"; role: ThreadMessage["role"]; content: string; runId?: string | null}
-  | {id: string; kind: "activity"; title: string; activities: ActivityEntry[]; eventCount: number}
+  | {id: string; kind: "activity"; title: string; activities: ActivityEntry[]; stepCount: number}
   | {id: string; kind: "info"; title: string; content: string}
   | {id: string; kind: "error"; message: string};
 
-type ActivityEntry = {
-  id: string;
-  stage: string;
-  status: "started" | "updated" | "completed" | "error";
-  message: string;
-  createdAt: string;
-};
-
 type ThreadSessionLike = Partial<ThreadSessionSummary> & Partial<WorkflowThread>;
 
-const LIVE_UI_FLUSH_MS = 80;
+const LIVE_UI_FLUSH_MS = 200;
 const WORKING_TRANSCRIPT_LIMIT = 4;
 
 const parseArgs = (argv: string[]): Args => {
@@ -125,9 +224,38 @@ const isAbortError = (error: unknown): boolean =>
 const isRunNotCompletedError = (message: string): boolean =>
   message.startsWith("409 ") && message.includes("is not completed");
 
+function loadCompletedRunResult(
+  client: AcademicAgentClient,
+  runId: string,
+  threadId: string,
+): Pick<RunResultResponse, "thread" | "messages"> {
+  try {
+    const result = client.getRunResult(runId);
+    return {thread: result.thread, messages: result.messages ?? []};
+  } catch {
+    const response = client.readThreadMessages(threadId);
+    return {thread: response.thread, messages: response.messages};
+  }
+}
+
+function isUserVisibleAssistantDelta(event: SSEEvent, streamUnlocked: boolean): boolean {
+  if (event.event_type !== "assistant.delta") {
+    return false;
+  }
+  const source = String(event.payload?.source ?? "");
+  if (source === "provider_stream") {
+    return false;
+  }
+  return streamUnlocked || source === "final_answer";
+}
+
+function isFinalAnswerReset(event: SSEEvent): boolean {
+  return event.event_type === "assistant.reset" && event.payload?.reason === "final_answer";
+}
+
 const transcriptFromMessagesWithActivity = (
   messages: ThreadMessage[],
-  activityHistory: Record<string, {activities: ActivityEntry[]; eventCount: number}>,
+  activityHistory: Record<string, {activities: ActivityEntry[]; stepCount: number}>,
 ): TranscriptEntry[] => {
   const entries: TranscriptEntry[] = [];
   const insertedActivityRunIds = new Set<string>();
@@ -144,9 +272,9 @@ const transcriptFromMessagesWithActivity = (
       entries.push({
         id: `activity_${runId}`,
         kind: "activity",
-        title: "Working trace",
+        title: "工作轨迹",
         activities: runActivity.activities,
-        eventCount: runActivity.eventCount,
+        stepCount: runActivity.stepCount ?? runActivity.activities.length,
       });
       insertedActivityRunIds.add(runId);
     }
@@ -159,54 +287,6 @@ const transcriptFromMessagesWithActivity = (
     });
   }
   return entries;
-};
-
-const activityFromEvent = (event: SSEEvent): ActivityEntry | null => {
-  if (!event.event_type.startsWith("activity.")) {
-    if (event.event_type === "run.failed") {
-      return {
-        id: event.event_id,
-        stage: "error",
-        status: "error",
-        message: String(event.payload?.error ?? "Run failed."),
-        createdAt: event.created_at,
-      };
-    }
-    if (event.event_type === "paper_search.evidence.created") {
-      const query = String(event.payload?.query ?? "paper search");
-      const resultCount = Number(event.payload?.result_count ?? 0);
-      const path = String(event.payload?.path ?? "");
-      return {
-        id: event.event_id,
-        stage: "evidence",
-        status: "completed",
-        message: `已保存 paper search evidence：${query} (${resultCount} results)${path ? ` · ${path}` : ""}`,
-        createdAt: event.created_at,
-      };
-    }
-    if (event.event_type === "paper_search.evidence.failed") {
-      return {
-        id: event.event_id,
-        stage: "evidence",
-        status: "error",
-        message: `paper search evidence 保存失败：${String(event.payload?.error ?? "unknown error")}`,
-        createdAt: event.created_at,
-      };
-    }
-    return null;
-  }
-
-  const status = event.event_type.replace("activity.", "");
-  const allowedStatuses = new Set(["started", "updated", "completed"]);
-  return {
-    id: event.event_id,
-    stage: String(event.payload?.stage ?? "working"),
-    status: allowedStatuses.has(status)
-      ? (status as ActivityEntry["status"])
-      : "updated",
-    message: String(event.payload?.message ?? event.event_type),
-    createdAt: event.created_at,
-  };
 };
 
 const normalizeThreadSession = (thread: ThreadSessionLike): ThreadSessionSummary | null => {
@@ -236,49 +316,6 @@ const normalizeThreadSessions = (threads: ThreadSessionLike[]): ThreadSessionSum
     .map(normalizeThreadSession)
     .filter((thread): thread is ThreadSessionSummary => Boolean(thread))
     .filter((thread) => thread.message_count > 0);
-
-const SLASH_COMMANDS: SlashCommand[] = [
-  "new",
-  "resume",
-  "rename",
-  "plan",
-  "artifact",
-  "context",
-  "freeze",
-  "review",
-  "cache",
-  "clear-cache",
-  "config",
-  "quit",
-];
-
-const parseSlashCommand = (
-  input: string,
-): {command: SlashCommand; value: string} | null => {
-  const trimmed = input.trim();
-  if (!trimmed.startsWith("/")) {
-    return null;
-  }
-  const [rawCommand, ...rest] = trimmed.slice(1).split(/\s+/);
-  const command = rawCommand.toLowerCase() as SlashCommand;
-  if (!SLASH_COMMANDS.includes(command)) {
-    return null;
-  }
-  return {command, value: rest.join(" ").trim()};
-};
-
-const slashSuggestion = (input: string): string | null => {
-  const trimmed = input.trim();
-  if (!trimmed.startsWith("/") || trimmed.includes(" ")) {
-    return null;
-  }
-  const fragment = trimmed.slice(1).toLowerCase();
-  if (!fragment) {
-    return null;
-  }
-  const match = SLASH_COMMANDS.find((command) => command.startsWith(fragment));
-  return match && match !== fragment ? `/${match}` : null;
-};
 
 const formatElapsed = (milliseconds: number): string => {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -428,8 +465,14 @@ const frozenPlanText = (result: FreezeIdeaPlanResponse): string =>
 
 const parseReviewCommandValue = (
   value: string,
-): {decision: "Reject" | "Revise" | "Advance"; notes: string | null} | null => {
-  const [rawDecision, ...rest] = value.trim().split(/\s+/);
+): {
+  decision: "Reject" | "Revise" | "Advance" | "Provisional";
+  notes: string | null;
+  scores?: ReviewIdeaPlanRequest["scores"];
+  confidence?: ReviewIdeaPlanRequest["confidence"];
+} | null => {
+  const tokens = value.trim().split(/\s+/);
+  const rawDecision = tokens[0];
   const normalized = rawDecision?.toLowerCase();
   const decision =
     normalized === "reject"
@@ -438,12 +481,80 @@ const parseReviewCommandValue = (
         ? "Revise"
         : normalized === "advance"
           ? "Advance"
-          : null;
+          : normalized === "provisional"
+            ? "Provisional"
+            : null;
   if (!decision) {
     return null;
   }
-  const notes = rest.join(" ").trim();
-  return {decision, notes: notes.length > 0 ? notes : null};
+  let scores: ReviewIdeaPlanRequest["scores"];
+  let confidence: ReviewIdeaPlanRequest["confidence"];
+  const noteParts: string[] = [];
+  for (let i = 1; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === "--scores") {
+      scores = {};
+      for (let j = i + 1; j < tokens.length; j += 1) {
+        const scoreToken = tokens[j];
+        if (scoreToken.startsWith("--")) {
+          i = j - 1;
+          break;
+        }
+        const [key, rawValue] = scoreToken.split("=");
+        const parsed = Number(rawValue);
+        if (
+          key &&
+          Number.isInteger(parsed) &&
+          parsed >= 0 &&
+          parsed <= 6 &&
+          (key === "originality" ||
+            key === "significance" ||
+            key === "soundness" ||
+            key === "clarity" ||
+            key === "feasibility_resource_fit")
+        ) {
+          scores[key] = parsed;
+        }
+        i = j;
+      }
+      continue;
+    }
+    if (token === "--confidence") {
+      const next = tokens[i + 1]?.toLowerCase();
+      if (next === "high" || next === "medium" || next === "low") {
+        confidence = next;
+        i += 1;
+      }
+      continue;
+    }
+    noteParts.push(token);
+  }
+  const notes = noteParts.join(" ").trim();
+  return {
+    decision,
+    notes: notes.length > 0 ? notes : null,
+    scores,
+    confidence,
+  };
+};
+
+const parseReadingCommandValue = (
+  value: string,
+): {mode: "quick" | "guided" | "exam"; paper_id: string; query?: string} | null => {
+  const tokens = value.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return {mode: "guided", paper_id: ""};
+  }
+  const modeToken = tokens[0].toLowerCase();
+  if (modeToken === "quick" || modeToken === "guided" || modeToken === "exam") {
+    const paperId = tokens[1] ?? "";
+    const query = tokens.slice(2).join(" ").trim();
+    if (!paperId) {
+      return null;
+    }
+    return {mode: modeToken, paper_id: paperId, query: query || undefined};
+  }
+  return {mode: "guided", paper_id: tokens[0], query: tokens.slice(1).join(" ").trim() || undefined};
 };
 
 const reviewText = (response: ReviewIdeaPlanResponse): string =>
@@ -463,7 +574,7 @@ const App = ({args}: {args: Args}) => {
   const activeRunThreadId = useRef<string | null>(null);
   const activeRunSequence = useRef(0);
   const interruptedRunIds = useRef<Set<string>>(new Set());
-  const activityHistoryRef = useRef<Record<string, {activities: ActivityEntry[]; eventCount: number}>>({});
+  const activityHistoryRef = useRef<Record<string, {activities: ActivityEntry[]; stepCount: number}>>({});
   const [idea, setIdea] = useState(args.idea ?? "");
   const [reply, setReply] = useState("");
   const [state, setState] = useState<UiState>("setup-loading");
@@ -471,8 +582,9 @@ const App = ({args}: {args: Args}) => {
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
   const [setupMode, setSetupMode] = useState<"first-run" | "reconfigure">("first-run");
   const stateBeforeSetupRef = useRef<UiState>("input");
-  const [eventCount, setEventCount] = useState(0);
+  const [stepCount, setStepCount] = useState(0);
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
+  const [activitiesExpanded, setActivitiesExpanded] = useState(false);
   const [assistantDraft, setAssistantDraft] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -559,14 +671,19 @@ const App = ({args}: {args: Args}) => {
       setWorkingStartedAt(null);
       return;
     }
-
     setWorkingStartedAt((current) => current ?? Date.now());
+  }, [isWorking]);
+
+  useEffect(() => {
+    if (state !== "resume-list") {
+      return;
+    }
     setClockNow(Date.now());
     const timer = setInterval(() => {
       setClockNow(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [isWorking]);
+  }, [state]);
 
   useEffect(() => {
     if (!setupConfigured) {
@@ -677,8 +794,9 @@ const App = ({args}: {args: Args}) => {
       void refreshContextUsage(messagesResponse.thread.thread_id, "");
       void refreshSessionStatus(messagesResponse.thread.thread_id);
       setRunId(null);
-      setEventCount(0);
+      setStepCount(0);
       setActivities([]);
+      setActivitiesExpanded(false);
       setAssistantDraft("");
       setError(null);
       setReply("");
@@ -976,7 +1094,7 @@ const App = ({args}: {args: Args}) => {
       }
       const parsed = parseReviewCommandValue(value);
       if (!parsed) {
-        setError("Usage: /review Reject|Revise|Advance [notes]");
+        setError("Usage: /review Reject|Revise|Advance|Provisional [notes]");
         setState(threadId ? "completed" : "input");
         return;
       }
@@ -986,6 +1104,8 @@ const App = ({args}: {args: Args}) => {
         const result = client.reviewThreadPlan(threadId, {
           decision: parsed.decision,
           notes: parsed.notes ?? null,
+          scores: parsed.scores,
+          confidence: parsed.confidence,
         });
         setSessionStatus(result.session_status);
         setTranscript((current) => [
@@ -1007,6 +1127,311 @@ const App = ({args}: {args: Args}) => {
     },
     [client, nextTranscriptEntryId, refreshSessionStatus, threadId],
   );
+
+  const showThreadStatus = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    const thread = client.getThread(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Thread Status",
+        content: [
+          `mode: ${thread.current_mode ?? "idea_plan"}`,
+          `lifecycle: ${thread.lifecycle_state ?? "lightweight_diagnosis"}`,
+          `idea_version: ${thread.idea_version ?? 1}`,
+          `impact: ${thread.impact_level ?? "None"}`,
+        ].join("\n"),
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const showConvergence = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    const status = client.threadConvergence(threadId);
+    setTranscript((current) => [
+      ...current,
+      {id: nextTranscriptEntryId(), kind: "info", title: "Convergence", content: formatConvergence(status)},
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const showPapers = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    const papers = client.listThreadPapers(threadId);
+    const lines = [
+      "## Search Evidence",
+      ...papers.evidence.map((e) => `- ${e.query} (${e.result_count} results)`),
+      "## Local Manifest",
+      ...papers.manifest_entries.map((e) => `- ${e.paper_id}: ${e.title} @ ${e.local_path}`),
+      "## Mini Reviews",
+      ...papers.mini_reviews.map((r) => `- ${r.title}`),
+    ];
+    setTranscript((current) => [
+      ...current,
+      {id: nextTranscriptEntryId(), kind: "info", title: "Papers", content: lines.join("\n") || "No papers yet."},
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const runMetaReview = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    const result = await client.triggerIdeaMetaReview(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "AC Meta-review",
+        content: `can_freeze=${String(result.meta_review.can_freeze)}\n${result.meta_review.evidence_summary}`,
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const startExperiment = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    setError(null);
+    setState("running");
+    setStepCount(0);
+    setActivities([]);
+    setActivitiesExpanded(false);
+    setAssistantDraft("");
+    try {
+      const response = await client.startExperimentDesignRun(
+        threadId,
+        "Continue experiment design from frozen plan.",
+      );
+      setRunId(response.run.run_id);
+      const liveUi = createBatchedRunEventHandler({
+        setActivities,
+        setAssistantDraft,
+        setStepCount,
+      });
+      const seenEvents: SSEEvent[] = [];
+      try {
+        await client.watchRunEvents(response.run.run_id, (event) => {
+          seenEvents.push(event);
+          liveUi.onEvent(event);
+        });
+      } finally {
+        liveUi.flush();
+        liveUi.dispose();
+      }
+      const runActivities = liveUi.getRunActivities();
+      const finalRun = client.getRun(response.run.run_id);
+      if (finalRun.status !== "completed") {
+        throw new Error(`Experiment design run ${finalRun.status}: ${finalRun.error ?? "unknown error"}`);
+      }
+      const blueprint = client.readThreadBlueprint(threadId);
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Experiment Design",
+          content: blueprint.content.trim() || "Blueprint draft updated.",
+        },
+      ]);
+      setAssistantDraft("");
+      setActivities([]);
+      setState("completed");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setState("completed");
+    }
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const runExperimentMetaReview = useCallback(async () => {
+    if (!threadId) {
+      setError("No active thread");
+      setState("input");
+      return;
+    }
+    setError(null);
+    setState("loading");
+    try {
+      const result = await client.triggerExperimentMetaReview(threadId);
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Experiment AC Meta-review",
+          content: `can_move_to_execution=${String(result.meta_review.can_move_to_execution)}\n${(result.meta_review.remaining_risks ?? []).join("; ")}`,
+        },
+      ]);
+      setState("completed");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setState("completed");
+    }
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const requestPaperReading = useCallback(
+    async (value: string) => {
+      if (!threadId) {
+        setError("No active thread");
+        setState("input");
+        return;
+      }
+      const parsed = parseReadingCommandValue(value);
+      if (!parsed || !parsed.paper_id) {
+        setError("Usage: /read [quick|guided|exam] <paper_id> [query]");
+        setState("completed");
+        return;
+      }
+      client.setThreadReadingRequest(threadId, parsed);
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Paper Reading",
+          content: `Queued ${parsed.mode} reading for ${parsed.paper_id}. PaperReader runs on next plan turn.`,
+        },
+      ]);
+      setState("completed");
+    },
+    [client, nextTranscriptEntryId, threadId],
+  );
+
+  const linkPaperEvidence = useCallback(
+    async (evidenceId: string, paperId: string) => {
+      if (!threadId) {
+        setError("No active thread");
+        setState("input");
+        return;
+      }
+      const entry = client.linkThreadPaperEvidence(threadId, evidenceId.trim(), paperId.trim());
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Paper Linked",
+          content: `Linked evidence ${evidenceId} → ${entry.paper_id} (${entry.title})`,
+        },
+      ]);
+      setState("completed");
+    },
+    [client, nextTranscriptEntryId, threadId],
+  );
+
+  const showHooks = useCallback(async () => {
+    if (!threadId) return;
+    const hooks = client.listThreadHooks(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Innovation Hooks",
+        content: hooks.map((h) => `- ${h.title}`).join("\n") || "No hooks yet.",
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const showDisagreements = useCallback(async () => {
+    if (!threadId) return;
+    const logs = client.listThreadDisagreements(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Disagreements",
+        content: logs.map((l) => `- ${l.title}`).join("\n") || "No disagreements logged.",
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const showVersion = useCallback(async () => {
+    if (!threadId) return;
+    const thread = client.getThread(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Idea Version",
+        content: `version=${thread.idea_version} impact=${thread.impact_level ?? "None"}`,
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const registerPaper = useCallback(
+    async (localPath: string) => {
+      if (!threadId || !localPath.trim()) return;
+      const entry = client.registerThreadPaper(threadId, localPath.trim());
+      setTranscript((current) => [
+        ...current,
+        {
+          id: nextTranscriptEntryId(),
+          kind: "info",
+          title: "Paper Registered",
+          content: `${entry.paper_id}: ${entry.title}`,
+        },
+      ]);
+      setState("completed");
+    },
+    [client, nextTranscriptEntryId, threadId],
+  );
+
+  const showBlueprint = useCallback(async () => {
+    if (!threadId) return;
+    const artifact = client.readThreadBlueprint(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Experiment Blueprint",
+        content: artifact.content,
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
+
+  const freezeBlueprint = useCallback(async () => {
+    if (!threadId) return;
+    const result = client.freezeThreadBlueprint(threadId);
+    setTranscript((current) => [
+      ...current,
+      {
+        id: nextTranscriptEntryId(),
+        kind: "info",
+        title: "Blueprint Frozen",
+        content: result.blueprint.body.main_claim,
+      },
+    ]);
+    setState("completed");
+  }, [client, nextTranscriptEntryId, threadId]);
 
   const inspectCache = useCallback(async () => {
     setError(null);
@@ -1079,8 +1504,9 @@ const App = ({args}: {args: Args}) => {
     setIdea("");
     setReply("");
     setState("input");
-    setEventCount(0);
+    setStepCount(0);
     setActivities([]);
+    setActivitiesExpanded(false);
     setAssistantDraft("");
     setRunId(null);
     setThreadId(null);
@@ -1137,7 +1563,6 @@ const App = ({args}: {args: Args}) => {
       activeRunAbortController.current = abortController;
       activeRunId.current = null;
       activeRunThreadId.current = existingThreadId ?? threadId ?? null;
-      const runActivities: ActivityEntry[] = [];
       const isCurrentRun = () =>
         activeRunSequence.current === sequence && !abortController.signal.aborted;
       const finishInterruptedRun = (targetThreadId: string | null) => {
@@ -1153,8 +1578,9 @@ const App = ({args}: {args: Args}) => {
       };
       try {
         setState("running");
-        setEventCount(0);
+        setStepCount(0);
         setActivities([]);
+        setActivitiesExpanded(false);
         setAssistantDraft("");
         setRunId(null);
         setThreadId(existingThreadId ?? null);
@@ -1192,58 +1618,27 @@ const App = ({args}: {args: Args}) => {
         setRunId(response.run.run_id);
         setThreadId(response.run.thread_id);
         const seenEvents: SSEEvent[] = [];
-        const pendingActivities: ActivityEntry[] = [];
-        let pendingAssistantDelta = "";
-        let liveEventCount = 0;
-        let flushTimer: NodeJS.Timeout | null = null;
-        const flushLiveUi = () => {
-          if (flushTimer) {
-            clearTimeout(flushTimer);
-            flushTimer = null;
-          }
-          if (pendingActivities.length > 0) {
-            const nextActivities = pendingActivities.splice(0, pendingActivities.length);
-            setActivities((current) => [...current, ...nextActivities].slice(-12));
-          }
-          if (pendingAssistantDelta.length > 0) {
-            const nextDelta = pendingAssistantDelta;
-            pendingAssistantDelta = "";
-            setAssistantDraft((current) => `${current}${nextDelta}`);
-          }
-          setEventCount(liveEventCount);
-        };
-        const scheduleLiveUiFlush = () => {
-          if (flushTimer) {
-            return;
-          }
-          flushTimer = setTimeout(flushLiveUi, LIVE_UI_FLUSH_MS);
-        };
-        await client.watchRunEvents(response.run.run_id, (event) => {
-          if (
-            !isCurrentRun() ||
-            interruptedRunIds.current.has(response.run.run_id)
-          ) {
-            return;
-          }
-          seenEvents.push(event);
-          liveEventCount = seenEvents.length;
-          const activity = activityFromEvent(event);
-          if (activity) {
-            runActivities.push(activity);
-            pendingActivities.push(activity);
-          }
-          if (event.event_type === "assistant.delta") {
-            const delta = String(event.payload?.delta ?? "");
-            if (delta) {
-              pendingAssistantDelta += delta;
+        const liveUi = createBatchedRunEventHandler({
+          setActivities,
+          setAssistantDraft,
+          setStepCount,
+        });
+        try {
+          await client.watchRunEvents(response.run.run_id, (event) => {
+            if (
+              !isCurrentRun() ||
+              interruptedRunIds.current.has(response.run.run_id)
+            ) {
+              return;
             }
-          } else if (event.event_type === "assistant.reset") {
-            pendingAssistantDelta = "";
-            setAssistantDraft("");
-          }
-          scheduleLiveUiFlush();
-        }, abortController.signal);
-        flushLiveUi();
+            seenEvents.push(event);
+            liveUi.onEvent(event);
+          }, abortController.signal);
+        } finally {
+          liveUi.flush();
+          liveUi.dispose();
+        }
+        const runActivities = liveUi.getRunActivities();
         if (
           !isCurrentRun() ||
           interruptedRunIds.current.has(response.run.run_id)
@@ -1262,7 +1657,11 @@ const App = ({args}: {args: Args}) => {
           finishInterruptedRun(finalRun.thread_id);
           return;
         }
-        const finalResult = client.getRunResult(response.run.run_id);
+        const finalResult = loadCompletedRunResult(
+          client,
+          response.run.run_id,
+          response.run.thread_id,
+        );
         if (
           !isCurrentRun() ||
           interruptedRunIds.current.has(response.run.run_id)
@@ -1270,21 +1669,21 @@ const App = ({args}: {args: Args}) => {
           finishInterruptedRun(response.run.thread_id);
           return;
         }
-        setThreadId(finalResult.run.thread_id);
+        setThreadId(finalResult.thread.thread_id);
         setSessionName(finalResult.thread.name ?? null);
-        void refreshSessionStatus(finalResult.run.thread_id);
+        void refreshSessionStatus(finalResult.thread.thread_id);
         const mergedActivityHistory = {
           ...activityHistoryRef.current,
-          [finalResult.run.run_id]: {
+          [response.run.run_id]: {
             activities: runActivities,
-            eventCount: seenEvents.length,
+            stepCount: runActivities.length,
           },
         };
         activityHistoryRef.current = mergedActivityHistory;
         setTranscript(
           transcriptFromMessagesWithActivity(finalResult.messages ?? [], mergedActivityHistory),
         );
-        void refreshContextUsage(finalResult.run.thread_id, "");
+        void refreshContextUsage(finalResult.thread.thread_id, "");
         setAssistantDraft("");
         setActivities([]);
         setReply("");
@@ -1294,7 +1693,7 @@ const App = ({args}: {args: Args}) => {
         }
         if (activeRunSequence.current === sequence) {
           activeRunId.current = null;
-          activeRunThreadId.current = finalResult.run.thread_id;
+          activeRunThreadId.current = finalResult.thread.thread_id;
         }
         if (args.once || (args.idea && !inputEnabled)) {
           setTimeout(() => exit(), 100);
@@ -1375,6 +1774,65 @@ const App = ({args}: {args: Args}) => {
         await freezeCurrentPlan();
       } else if (command.command === "review") {
         await reviewCurrentPlan(command.value);
+      } else if (command.command === "status") {
+        await showThreadStatus();
+      } else if (command.command === "convergence") {
+        await showConvergence();
+      } else if (command.command === "papers") {
+        const value = command.value.trim();
+        if (value.startsWith("add ")) {
+          await registerPaper(value.slice(4));
+        } else if (value.startsWith("link ")) {
+          const [, evidenceId, paperId] = value.split(/\s+/);
+          if (!evidenceId || !paperId) {
+            setError("Usage: /papers link <evidence_artifact_id> <paper_id>");
+            setState("completed");
+          } else {
+            await linkPaperEvidence(evidenceId, paperId);
+          }
+        } else {
+          await showPapers();
+        }
+      } else if (command.command === "hooks") {
+        await showHooks();
+      } else if (command.command === "disagreements") {
+        await showDisagreements();
+      } else if (command.command === "version") {
+        await showVersion();
+      } else if (command.command === "blueprint") {
+        await showBlueprint();
+      } else if (command.command === "freeze-blueprint") {
+        await freezeBlueprint();
+      } else if (command.command === "review-blueprint") {
+        if (threadId) {
+          client.reviewThreadBlueprint(threadId, command.value || "Revise");
+          setState("completed");
+        }
+      } else if (command.command === "back-to-plan") {
+        if (threadId) {
+          const thread = client.switchThreadToIdeaPlan(threadId);
+          setTranscript((current) => [
+            ...current,
+            {
+              id: nextTranscriptEntryId(),
+              kind: "info",
+              title: "Mode",
+              content: `Switched to Idea Plan mode (current_mode=${thread.current_mode}).`,
+            },
+          ]);
+          setState("completed");
+        }
+      } else if (command.command === "read") {
+        await requestPaperReading(command.value);
+      } else if (command.command === "meta-review") {
+        await runMetaReview();
+      } else if (command.command === "meta-review-blueprint") {
+        await runExperimentMetaReview();
+      } else if (command.command === "experiment") {
+        await startExperiment();
+      } else if (command.command === "pause") {
+        if (threadId) client.pauseThread(threadId, command.value || null);
+        setState("completed");
       } else if (command.command === "cache") {
         await inspectCache();
       } else {
@@ -1397,11 +1855,27 @@ const App = ({args}: {args: Args}) => {
       reviewCurrentPlan,
       resetToNewThread,
       resumeThreadByName,
+      runMetaReview,
       runIdeaPlan,
+      showConvergence,
       showCurrentArtifact,
       showCurrentPlan,
+      showPapers,
+      showHooks,
+      showDisagreements,
+      showVersion,
+      registerPaper,
+      showBlueprint,
+      freezeBlueprint,
       showThreadContext,
+      showThreadStatus,
       showResumeList,
+      startExperiment,
+      runExperimentMetaReview,
+      requestPaperReading,
+      linkPaperEvidence,
+      client,
+      threadId,
     ],
   );
 
@@ -1436,6 +1910,14 @@ const App = ({args}: {args: Args}) => {
       }
       if (key.escape && (state === "loading" || state === "running")) {
         void interruptCurrentRun();
+        return;
+      }
+      if (state === "running" && input === "e") {
+        setActivitiesExpanded((current) => !current);
+        return;
+      }
+      if (state === "completed" && input === "e") {
+        setActivitiesExpanded((current) => !current);
         return;
       }
       if (state === "loading") {
@@ -1593,7 +2075,11 @@ const App = ({args}: {args: Args}) => {
             </Text>
           )}
           {visibleTranscript.entries.map((entry) => (
-            <TranscriptEntryView key={entry.id} entry={entry} />
+            <TranscriptEntryView
+              key={entry.id}
+              entry={entry}
+              activitiesExpanded={activitiesExpanded}
+            />
           ))}
         </Box>
       )}
@@ -1612,7 +2098,7 @@ const App = ({args}: {args: Args}) => {
       )}
 
       {!inSetup && setupConfigured && state === "loading" && (
-        <WorkingStatus label={workingLabel} startedAt={workingStartedAt} now={clockNow} />
+        <WorkingStatusWithClock label={workingLabel} startedAt={workingStartedAt} />
       )}
 
       {!inSetup && setupConfigured && state === "resume-list" && (
@@ -1642,7 +2128,7 @@ const App = ({args}: {args: Args}) => {
       {!inSetup && setupConfigured && (state === "running" || state === "error") && (
         <Box flexDirection="column">
           {state === "running" ? (
-            <WorkingStatus label={workingLabel} startedAt={workingStartedAt} now={clockNow} />
+            <WorkingStatusWithClock label={workingLabel} startedAt={workingStartedAt} />
           ) : (
             <Text>
               Status: <Text color="red">error</Text>
@@ -1658,8 +2144,10 @@ const App = ({args}: {args: Args}) => {
           <ActivityStream
             activities={activities}
             assistantDraft={assistantDraft}
-            eventCount={eventCount}
+            stepCount={stepCount}
+            expanded={activitiesExpanded}
           />
+          <Text color="gray">按 e 展开/收起事件流 · Esc 中断当前 run</Text>
         </Box>
       )}
 
@@ -1687,7 +2175,13 @@ const App = ({args}: {args: Args}) => {
   );
 };
 
-const TranscriptEntryView = ({entry}: {entry: TranscriptEntry}) => {
+const TranscriptEntryView = ({
+  entry,
+  activitiesExpanded,
+}: {
+  entry: TranscriptEntry;
+  activitiesExpanded: boolean;
+}) => {
   if (entry.kind === "message") {
     const isUser = entry.role === "user";
     return (
@@ -1718,15 +2212,12 @@ const TranscriptEntryView = ({entry}: {entry: TranscriptEntry}) => {
 
   if (entry.kind === "activity") {
     return (
-      <Box flexDirection="column" borderStyle="single" borderColor="yellow" paddingX={1}>
-        <Text bold color="yellow">
-          {entry.title}
-        </Text>
-        {entry.activities.map((activity) => (
-          <ActivityLine key={activity.id} activity={activity} />
-        ))}
-        <Text color="gray">{entry.eventCount} local event(s) captured for trace.</Text>
-      </Box>
+      <ActivityBlock
+        title={entry.title}
+        activities={entry.activities}
+        stepCount={entry.stepCount}
+        expanded={activitiesExpanded}
+      />
     );
   }
 
@@ -1765,41 +2256,74 @@ const ContextUsageLine = ({usage}: {usage: ContextUsageResponse | null}) => {
   );
 };
 
-const ActivityStream = ({
+const ActivityBlock = memo(function ActivityBlock({
+  title,
+  activities,
+  stepCount,
+  expanded,
+}: {
+  title: string;
+  activities: ActivityEntry[];
+  stepCount: number;
+  expanded: boolean;
+}) {
+  const shown = visibleActivities(activities, expanded);
+  return (
+    <Box flexDirection="column" borderStyle="single" borderColor="yellow" paddingX={1}>
+      <Text bold color="yellow">
+        {title}
+      </Text>
+      {shown.map((activity) => (
+        <ActivityLine key={activity.id} activity={activity} />
+      ))}
+      <Text color="gray">
+        {activityStreamFooter(activities, expanded) || `共 ${stepCount} 步`}
+      </Text>
+    </Box>
+  );
+});
+
+const ActivityStream = memo(function ActivityStream({
   activities,
   assistantDraft,
-  eventCount,
+  stepCount,
+  expanded,
 }: {
   activities: ActivityEntry[];
   assistantDraft: string;
-  eventCount: number;
-}) => (
-  <Box flexDirection="column" gap={1}>
-    <Box flexDirection="column">
-      <Text bold color="yellow">
-        Working
-      </Text>
-      {activities.length === 0 ? (
-        <Text color="gray">Preparing local run...</Text>
-      ) : (
-        activities.map((activity) => (
-          <ActivityLine key={activity.id} activity={activity} />
-        ))
-      )}
-      <Text color="gray">{eventCount} local event(s) captured for trace.</Text>
-    </Box>
-    {assistantDraft.length > 0 && (
-      <Box flexDirection="column" borderStyle="single" borderColor="green" paddingX={1}>
-        <Text bold color="green">
-          Academic Agent
+  stepCount: number;
+  expanded: boolean;
+}) {
+  const shown = visibleActivities(activities, expanded);
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column">
+        <Text bold color="yellow">
+          Working
         </Text>
-        <Text>{assistantDraft}</Text>
+        {shown.length === 0 ? (
+          <Text color="gray">Preparing local run...</Text>
+        ) : (
+          shown.map((activity) => <ActivityLine key={activity.id} activity={activity} />)
+        )}
+        <Text color="gray">
+          {activityStreamFooter(activities, expanded) || (stepCount > 0 ? `共 ${stepCount} 步` : "")}
+        </Text>
       </Box>
-    )}
-  </Box>
-);
+      {assistantDraft.length > 0 && (
+        <Box flexDirection="column" borderStyle="single" borderColor="green" paddingX={1}>
+          <Text bold color="green">
+            Academic Agent
+          </Text>
+          <Text>{assistantDraft}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+});
 
-const ActivityLine = ({activity}: {activity: ActivityEntry}) => {
+const ActivityLine = memo(function ActivityLine({activity}: {activity: ActivityEntry}) {
+  const stageLabel = STAGE_LABELS[activity.stage] ?? activity.stage;
   const color =
     activity.status === "completed"
       ? "green"
@@ -1819,11 +2343,32 @@ const ActivityLine = ({activity}: {activity: ActivityEntry}) => {
   return (
     <Text>
       <Text color={color}>{marker}</Text>{" "}
-      <Text color="gray">{activity.stage}</Text>{" "}
+      <Text color="gray">{stageLabel}</Text>{" "}
       <Text>{activity.message}</Text>
     </Text>
   );
-};
+});
+
+const WorkingStatusWithClock = memo(function WorkingStatusWithClock({
+  label,
+  startedAt,
+}: {
+  label: string;
+  startedAt: number | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    if (startedAt === null) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return <WorkingStatus label={label} startedAt={startedAt} now={now} />;
+});
 
 const WorkingStatus = ({
   label,
@@ -1870,23 +2415,7 @@ const ResumeSessionRow = ({
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
-  const commands = [
-    "/new",
-    "/new IDEA",
-    "/resume",
-    "/resume NAME",
-    "/rename",
-    "/rename NAME",
-    "/plan",
-    "/artifact",
-    "/context",
-    "/freeze",
-    "/review Reject|Revise|Advance",
-    "/cache",
-    "/clear-cache",
-    "/config",
-    "/quit",
-  ].join(", ");
+  const commands = helpText();
   process.stdout.write(
     "Usage: academic-agent [resume [NAME]|--resume [NAME]] [--project-root PATH] [--idea TEXT] [--once]\n" +
       `Commands: ${commands}\n` +

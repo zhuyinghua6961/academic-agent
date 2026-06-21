@@ -8,7 +8,7 @@ This is a local-first academic research agent monorepo written in **TypeScript**
 - `workspace` — SQLite + `.academic-agent/` persistence
 - `config` — TOML + env configuration
 - `harness` — artifacts, memory, cache, traces
-- `providers` — LLM adapters (mock, OpenAI, Anthropic, DeepSeek)
+- `providers` — LLM adapters (OpenAI, Anthropic, DeepSeek; RecordedProvider for CI)
 - `search` — paper/web search and tool registry
 - `schemas` — Zod contracts (source of truth)
 - `core-service` — in-process API used by the TUI
@@ -29,7 +29,7 @@ TypeScript packages use ESM. React components in PascalCase; functions and varia
 
 ## Testing Guidelines
 
-Use Vitest in `tests/` and `packages/**/*.test.ts`. Run `make test` before submitting changes. Set `ACADEMIC_AGENT_ALLOW_MOCK=1` for deterministic mock provider tests.
+Use Vitest in `tests/` and `packages/**/*.test.ts`. Run `make test` before submitting changes. CI uses **RecordedProvider** with fixtures under `tests/recordings/` (set `ACADEMIC_AGENT_RECORDED_PROVIDER=1` and `ACADEMIC_AGENT_RECORDINGS_DIR`).
 
 ## Commit & Pull Request Guidelines
 
@@ -37,4 +37,4 @@ Recent history uses short imperative subjects, sometimes with conventional prefi
 
 ## Security & Configuration Tips
 
-Never commit real API keys. Copy `.academic-agent/.env.example` to `~/.academic-agent/.env` for global secrets. Keep local databases, traces, caches, and runtime files out of commits unless they are deliberate fixtures. Set `ACADEMIC_AGENT_ALLOW_MOCK=1` only for development and tests.
+Never commit real API keys. Copy `.academic-agent/.env.example` to `~/.academic-agent/.env` for global secrets. Keep local databases, traces, caches, and runtime files out of commits unless they are deliberate fixtures. Use RecordedProvider fixtures for deterministic tests without live API keys.

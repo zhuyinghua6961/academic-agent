@@ -45,25 +45,41 @@ describe("setup config", () => {
     expect(() => config.profile("planner")).toThrow(ConfigurationRequiredError);
   });
 
-  it("legacy mock config requires setup", () => {
+  it("legacy mock config is treated as unconfigured", () => {
     const root = makeTempRoot();
     writeConfig(
       root,
-      '[providers.planner]\nprovider = "mock"\nmodel = "mock-idea-diagnoser-v0"\n',
+      '[providers.planner]\nprovider = "openai"\nmodel = "mock-idea-diagnoser-v0"\n',
     );
     const config = AgentConfig.load(root, {HOME: join(root, "home")});
-    expect(config.planner_or_none()).toBeNull();
-    expect(config.setup_state()).toBe("unconfigured");
+    expect(config.planner_or_none()?.provider).toBe("openai");
+    expect(config.setup_state()).toBe("invalid");
   });
 
-  it("explicit development override allows mock", () => {
+  it("recorded provider counts as configured without API key", () => {
     const root = makeTempRoot();
+    writeConfig(
+      root,
+      '[providers.planner]\nprovider = "openai"\nmodel = "gpt-4.1-mini"\napi_key_env = "TEST_KEY"\n',
+    );
     const config = AgentConfig.load(root, {
       HOME: join(root, "home"),
-      ACADEMIC_AGENT_ALLOW_MOCK: "1",
+      ACADEMIC_AGENT_RECORDED_PROVIDER: "1",
     });
-    expect(config.profile("planner").provider).toBe("mock");
     expect(config.setup_state()).toBe("configured");
+  });
+
+  it("reviewer and extractor inherit planner when omitted", () => {
+    const root = makeTempRoot();
+    writeConfig(
+      root,
+      '[providers.planner]\nprovider = "openai"\nmodel = "gpt-4.1-mini"\napi_key_env = "TEST_KEY"\n',
+    );
+    const config = AgentConfig.load(root, {HOME: join(root, "home")});
+    expect(config.profile("reviewer").model).toBe("gpt-4.1-mini");
+    expect(config.profile("reviewer").profile).toBe("reviewer");
+    expect(config.profile("extractor").profile).toBe("extractor");
+    expect(() => config.profile("embedder")).toThrow(ConfigurationRequiredError);
   });
 
   it("env precedence is process then project then global", () => {

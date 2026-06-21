@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"can_move_to_execution\":false,\"baseline_risks\":[],\"metric_risks\":[],\"remaining_risks\":[\"Need more ablations\"],\"conditions_for_freeze\":[]}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 40, "output_tokens": 20}
+}

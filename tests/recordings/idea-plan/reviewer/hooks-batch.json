@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"hooks\":[{\"trigger_paper\":\"Latent diffusion paper\",\"unsolved_problem\":\"Slow sampling at high resolution\",\"candidate_mechanism\":\"Distilled scheduler with learned step skipping\",\"why_non_trivial\":\"Requires preserving text alignment under compression\",\"validation_path\":\"Compare FID vs step count on COCO\",\"novelty_risk\":\"medium\"}]}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 40, "output_tokens": 25}
+}

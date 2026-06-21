@@ -57,6 +57,16 @@ export class ToolRegistry {
   get size(): number {
     return this.tools.size;
   }
+
+  withoutTool(name: string): ToolRegistry {
+    const next = new ToolRegistry();
+    for (const [toolName, executor] of this.tools.entries()) {
+      if (toolName !== name) {
+        next.register(executor);
+      }
+    }
+    return next;
+  }
 }
 
 export class WebSearchTool implements ToolExecutor {

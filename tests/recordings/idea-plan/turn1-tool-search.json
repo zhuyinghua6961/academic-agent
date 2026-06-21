@@ -1,0 +1,20 @@
+{
+  "output": {
+    "content": "",
+    "tool_calls": [
+      {
+        "call_id": "call_search_1",
+        "name": "paper_search",
+        "arguments": {
+          "query": "text to image diffusion",
+          "max_results": 10
+        }
+      }
+    ],
+    "finish_reason": "tool_calls"
+  },
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 40
+  }
+}

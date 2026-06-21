@@ -1,0 +1,8 @@
+{
+  "output": {
+    "content": "{\"problem\":\"Diffusion sampling cost\",\"method\":\"Latent diffusion with classifier-free guidance\",\"claim\":\"High-quality text-to-image synthesis\",\"limitation\":\"Slow inference\",\"strengths\":[\"Strong baselines\"],\"weaknesses\":[\"Limited novelty on conditioning\"],\"innovation_hooks\":[\"Faster sampling\"],\"novelty_risk_for_idea\":\"medium\"}",
+    "tool_calls": [],
+    "finish_reason": "stop"
+  },
+  "usage": {"input_tokens": 50, "output_tokens": 30}
+}

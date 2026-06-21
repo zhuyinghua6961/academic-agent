@@ -17,6 +17,11 @@ export {
   parseTavilyResults,
   parseSerperResults,
   parseSerpapiResults,
+  inferArxivPublicationStatus,
+  inferOpenalexPublicationStatus,
+  annotatePublicationStatus,
+  venueRankScore,
+  rankPaperSearchResults,
 } from "./search.js";
 export {ToolRegistry, getDefaultTools, WebSearchTool, PaperSearchTool} from "./tools.js";
 export type {SearchProvider} from "./search.js";

@@ -17,6 +17,8 @@
   "devDependencies": {
     "@academic-agent/agent-core": "workspace:*",
     "@academic-agent/config": "workspace:*",
+    "@academic-agent/harness": "workspace:*",
+    "@academic-agent/pdf-ingest": "workspace:*",
     "@academic-agent/setup": "workspace:*",
     "@academic-agent/workspace": "workspace:*",
     "@types/node": "^22.15.21",

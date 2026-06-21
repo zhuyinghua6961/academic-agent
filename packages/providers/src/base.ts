@@ -57,12 +57,9 @@ export class BaseIdeaDiagnosisProvider implements IdeaDiagnosisProvider {
   }
 
   protected apiKey(): string {
-    if (this.config.provider === "mock") {
-      return "";
-    }
     if (!liveProvidersEnabled(this.env)) {
       throw new ProviderError(
-        "Live providers are disabled. Set ACADEMIC_AGENT_ENABLE_LIVE_PROVIDERS=1 to call a non-mock provider.",
+        "Live providers are disabled. Set ACADEMIC_AGENT_ENABLE_LIVE_PROVIDERS=1 to call a live provider.",
       );
     }
     if (!this.config.api_key_env) {

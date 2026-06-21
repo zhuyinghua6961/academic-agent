@@ -10,8 +10,8 @@ export {
   SearchProviderConfig,
   globalAgentEnvPath,
   liveProvidersEnabled,
+  recordedProviderEnabled,
   loadMergedEnv,
-  mockProviderAllowed,
   projectAgentConfigPath,
   renderDefaultProjectConfig,
 } from "./config.js";

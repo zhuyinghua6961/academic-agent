@@ -6,7 +6,6 @@ import { parse as parseDotenv } from "dotenv";
 import { parse as parseToml } from "smol-toml";
 
 export type ProviderName =
-  | "mock"
   | "openai"
   | "anthropic"
   | "openai_compatible"
@@ -37,7 +36,6 @@ export const PROFILE_NAMES: readonly ProviderProfileName[] = [
 ] as const;
 
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
-  mock: "mock-idea-diagnoser-v0",
   openai: "gpt-4.1-mini",
   anthropic: "claude-3-5-haiku-latest",
   openai_compatible: "local-openai-compatible-model",
@@ -45,7 +43,6 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
 };
 
 const DEFAULT_API_KEY_ENVS: Record<ProviderName, string | null> = {
-  mock: null,
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openai_compatible: "ACADEMIC_AGENT_OPENAI_COMPATIBLE_API_KEY",
@@ -53,7 +50,6 @@ const DEFAULT_API_KEY_ENVS: Record<ProviderName, string | null> = {
 };
 
 const DEFAULT_BASE_URLS: Record<ProviderName, string | null> = {
-  mock: null,
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com",
   openai_compatible: "http://127.0.0.1:8000/v1",
@@ -214,8 +210,9 @@ export function liveProvidersEnabled(env?: Readonly<Record<string, string>>): bo
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-export function mockProviderAllowed(env: Readonly<Record<string, string>>): boolean {
-  const value = env.ACADEMIC_AGENT_ALLOW_MOCK ?? "";
+export function recordedProviderEnabled(env?: Readonly<Record<string, string>>): boolean {
+  const source = env ?? process.env;
+  const value = source.ACADEMIC_AGENT_RECORDED_PROVIDER ?? "";
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
@@ -284,18 +281,11 @@ export class AgentConfig {
       }
     }
 
-    const profiles = defaultProfiles({ includePlanner: false });
+    const profiles: Partial<Record<ProviderProfileName, ProviderProfileConfig>> = {};
     for (const [name, payload] of Object.entries(rawProfiles)) {
       if (isProviderProfileName(name)) {
-        const profile = profileFromPayload(name, payload);
-        if (profile.provider !== "mock" || mockProviderAllowed(sourceEnv)) {
-          profiles[name] = profile;
-        }
+        profiles[name] = profileFromPayload(name, payload);
       }
-    }
-
-    if (!profiles.planner && mockProviderAllowed(sourceEnv)) {
-      profiles.planner = mockProfile("planner");
     }
 
     applyEnvOverrides(profiles, sourceEnv);
@@ -311,12 +301,19 @@ export class AgentConfig {
 
   profile(name: ProviderProfileName): ProviderProfileConfig {
     const config = this.profiles[name];
-    if (config === undefined) {
-      throw new ConfigurationRequiredError(
-        `configuration required for provider profile: ${name}`,
-      );
+    if (config !== undefined) {
+      return config;
     }
-    return config;
+    const inheritsPlanner: ProviderProfileName[] = ["reviewer", "extractor", "writer"];
+    if (inheritsPlanner.includes(name)) {
+      const planner = this.planner_or_none();
+      if (planner !== null) {
+        return {...planner, profile: name};
+      }
+    }
+    throw new ConfigurationRequiredError(
+      `configuration required for provider profile: ${name}`,
+    );
   }
 
   planner_or_none(): ProviderProfileConfig | null {
@@ -328,8 +325,8 @@ export class AgentConfig {
     if (planner === null) {
       return "unconfigured";
     }
-    if (planner.provider === "mock") {
-      return mockProviderAllowed(this.env) ? "configured" : "unconfigured";
+    if (recordedProviderEnabled(this.env)) {
+      return "configured";
     }
     const hasKey = Boolean(planner.api_key_env && this.env[planner.api_key_env]);
     if (!hasKey || !liveProvidersEnabled(this.env)) {
@@ -360,7 +357,7 @@ export class AgentConfig {
         reasoning_effort: config.reasoning_effort,
         reasoning_summary: config.reasoning_summary,
         live_enabled: liveEnabled,
-        will_use_live: config.provider !== "mock" && liveEnabled && hasApiKey,
+        will_use_live: liveEnabled && hasApiKey,
       });
     }
     return statuses;
@@ -499,7 +496,6 @@ function loadEnv(projectRoot: string, env?: Record<string, string>): Record<stri
 
 function isProviderName(value: unknown): value is ProviderName {
   return (
-    value === "mock" ||
     value === "openai" ||
     value === "anthropic" ||
     value === "openai_compatible" ||
@@ -527,7 +523,7 @@ function validateProviderProfileConfig(raw: JsonObject): ProviderProfileConfig {
   return {
     profile,
     provider,
-    model: String(raw.model ?? DEFAULT_MODELS.mock),
+    model: String(raw.model ?? DEFAULT_MODELS.openai),
     api_key_env: optionalStr(raw.api_key_env, null),
     base_url: optionalStr(raw.base_url, null),
     max_output_tokens: positiveInt(raw.max_output_tokens, 900),
@@ -543,37 +539,14 @@ function validateProviderProfileConfig(raw: JsonObject): ProviderProfileConfig {
   };
 }
 
-function mockProfile(profile: ProviderProfileName): ProviderProfileConfig {
-  return validateProviderProfileConfig({
-    profile,
-    provider: "mock",
-    model: DEFAULT_MODELS.mock,
-    api_key_env: null,
-    base_url: null,
-  });
-}
-
-function defaultProfiles(options: {
-  includePlanner?: boolean;
-}): Partial<Record<ProviderProfileName, ProviderProfileConfig>> {
-  const includePlanner = options.includePlanner ?? true;
-  const profiles: Partial<Record<ProviderProfileName, ProviderProfileConfig>> = {};
-  for (const profile of PROFILE_NAMES) {
-    if (includePlanner || profile !== "planner") {
-      profiles[profile] = mockProfile(profile);
-    }
-  }
-  return profiles;
-}
-
 function profileFromPayload(
   profileName: ProviderProfileName,
   payload: JsonObject,
 ): ProviderProfileConfig {
-  const provider = isProviderName(payload.provider) ? payload.provider : "mock";
+  const provider = isProviderName(payload.provider) ? payload.provider : "openai";
   const current: JsonObject = {
     provider,
-    model: DEFAULT_MODELS[provider] ?? DEFAULT_MODELS.mock,
+    model: DEFAULT_MODELS[provider],
     api_key_env: DEFAULT_API_KEY_ENVS[provider],
     base_url: DEFAULT_BASE_URLS[provider],
     ...payload,
