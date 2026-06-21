@@ -44,6 +44,7 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+**/target/
 
 # Runtime logs and local databases
 *.log
