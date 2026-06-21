@@ -1,0 +1,21 @@
+{
+  "name": "@academic-agent/harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@academic-agent/config": "workspace:*",
+    "@academic-agent/schemas": "workspace:*",
+    "@academic-agent/workspace": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}

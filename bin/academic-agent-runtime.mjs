@@ -21,26 +21,3 @@ export function configPaths({home, projectRoot, repoRoot, env}) {
   }
   return paths;
 }
-
-export function coreSpawnPlan({repoRoot, projectRoot, condaEnv, host, port}) {
-  return {
-    command: "conda",
-    cwd: projectRoot,
-    logPath: resolve(projectRoot, ".academic-agent", `core-${port}.log`),
-    args: [
-      "run",
-      "-n",
-      condaEnv,
-      "env",
-      "PYTHONNOUSERSITE=1",
-      "uvicorn",
-      "academic_agent_core.api:app",
-      "--app-dir",
-      resolve(repoRoot, "services/core/src"),
-      "--host",
-      host,
-      "--port",
-      port,
-    ],
-  };
-}

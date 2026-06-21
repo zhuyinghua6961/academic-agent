@@ -6,10 +6,21 @@
     "academic-agent": "./bin/academic-agent.mjs"
   },
   "scripts": {
-    "tui": "pnpm --filter @academic-agent/tui start",
+    "tui": "pnpm --filter @academic-agent/app start",
     "cli": "node ./bin/academic-agent.mjs",
-    "schema": "conda run -n academic-agent env PYTHONNOUSERSITE=1 python scripts/export_schema.py",
+    "dev": "pnpm --filter @academic-agent/app dev",
     "typecheck": "pnpm -r typecheck",
-    "test": "make test"
+    "test": "vitest run && node --test bin/academic-agent-runtime.test.mjs && pnpm --filter @academic-agent/app test",
+    "test:watch": "vitest",
+    "build": "pnpm -r run build"
+  },
+  "devDependencies": {
+    "@academic-agent/agent-core": "workspace:*",
+    "@academic-agent/config": "workspace:*",
+    "@academic-agent/setup": "workspace:*",
+    "@academic-agent/workspace": "workspace:*",
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }

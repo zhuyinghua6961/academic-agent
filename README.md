@@ -18,7 +18,7 @@ ResearchIdeaPlan frozen
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| Foundation Skeleton | 可运行 | TypeScript TUI + FastAPI core + LangGraph single-mode graph + SQLite/files workspace |
+| Foundation Skeleton | 可运行 | TypeScript monorepo：Ink TUI + agent-core + SQLite workspace |
 | Idea Plan Mode | v0 可用 | 支持多轮 idea 诊断、检索、working trace、artifact 更新和 final synthesis fallback |
 | Memory / Context / Compact | v0.5 | 支持 context usage、双层 compact、conversation summary、trace；尚未实现完整 semantic retrieval / rehydrate |
 | Search / Tool Loop | v0.5 | 支持 arXiv、OpenAlex、Tavily 等；有 arXiv fallback query、429 cooldown、部分失败显示 |
@@ -39,65 +39,58 @@ ResearchIdeaPlan frozen
 
 ## 技术栈
 
-- TUI: TypeScript + Ink + React + pnpm
-- Core: Python 3.12+ + FastAPI + LangGraph + Pydantic
-- API/Event: FastAPI + SSE
-- Storage: `.academic-agent/` local workspace，SQLite 存 metadata/event/thread/cache，files 存 artifact/trace/memory
-- Schema: Pydantic 为源，导出 JSON Schema 和 TypeScript types
+- Runtime: Node.js 22+ + TypeScript + pnpm monorepo
+- TUI: Ink + React (`apps/academic-agent`)
+- Agent core: 自研 agent loop（`packages/agent-core`），非 LangGraph
+- Storage: `.academic-agent/` local workspace，SQLite + files
+- Schema: Zod（`packages/schemas`）
 - Providers: mock、OpenAI、Anthropic、OpenAI-compatible、DeepSeek
 - Search: arXiv、OpenAlex、Tavily、Brave、Serper、SerpAPI、DuckDuckGo
 
 ## 目录结构
 
 ```text
-apps/tui/                 # Ink TUI
-services/core/            # FastAPI + LangGraph core
-packages/schemas/         # generated schema/types
-scripts/export_schema.py  # Pydantic -> JSON Schema / TS types
+apps/academic-agent/      # Ink TUI + in-process core client
+packages/agent-core/      # IdeaPlanRunner + agent loop
+packages/workspace/       # SQLite persistence
+packages/config/          # TOML + env
+packages/harness/         # artifacts, memory, cache, traces
+packages/providers/       # LLM adapters
+packages/search/          # search + tools
+packages/schemas/         # Zod contracts
+packages/core-service/    # TUI-facing service layer
 docs/                     # mode and architecture design docs
-bin/academic-agent.mjs    # local CLI wrapper, can auto-start core
-.academic-agent/          # local workspace, mostly ignored by git
+bin/academic-agent.mjs    # CLI entrypoint
+.academic-agent/          # local workspace (mostly gitignored)
 ```
 
 ## 安装
 
-### 1. 创建 Python 环境
+### 1. Node.js 与 pnpm
 
-推荐使用 conda：
-
-```bash
-conda create -n academic-agent python=3.12 -y
-conda activate academic-agent
-```
-
-安装 Python 依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
-或者直接用 Makefile：
-
-```bash
-make install
-```
-
-### 2. 安装 pnpm 和 TypeScript 依赖
-
-如果本机没有 pnpm：
+需要 Node.js 22+ 和 pnpm 11：
 
 ```bash
 corepack enable
 corepack prepare pnpm@11.3.0 --activate
+make install
 ```
 
-安装 workspace 依赖：
+`better-sqlite3` 需要本地编译；若测试报 native binding 错误，在仓库根目录执行：
 
 ```bash
-pnpm install
+cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npm run build-release
 ```
 
-### 3. 生成 schema
+### 2. 开发 mock 模式
+
+测试或本地开发可使用 mock provider：
+
+```bash
+export ACADEMIC_AGENT_ALLOW_MOCK=1
+```
+
+### 3. 启动
 
 ```bash
 make schema
@@ -165,26 +158,24 @@ pnpm link --global
 academic-agent
 ```
 
-`academic-agent` 会读取 `.academic-agent/config.toml` 的端口配置，并尝试自动启动/释放本机 core。
-
-### 开发方式：分开启动 core 和 TUI
-
-终端 1：
+或在项目目录：
 
 ```bash
-make dev-core
+make dev
+# 或
+pnpm tui
 ```
 
-终端 2：
+CLI 为单进程 TypeScript 应用，不再依赖 Python/FastAPI。
+
+### 指定项目根目录
 
 ```bash
-make dev-tui
+ACADEMIC_AGENT_PROJECT_ROOT=/path/to/project academic-agent
 ```
 
-也可以指定 core URL：
-
 ```bash
-pnpm --filter @academic-agent/tui dev -- --core-url http://127.0.0.1:8765
+pnpm --filter @academic-agent/app dev
 ```
 
 ## TUI 命令
@@ -221,17 +212,8 @@ make test
 分开运行：
 
 ```bash
-make schema
-make test-python
-make typecheck
-conda run -n academic-agent env PYTHONNOUSERSITE=1 python -m ruff check services/core/src services/core/tests
-conda run -n academic-agent env PYTHONNOUSERSITE=1 python -m mypy services/core/src/academic_agent_core
-```
-
-当前主要回归测试集中在：
-
-```text
-services/core/tests/test_foundation_slice.py
+pnpm -r typecheck
+pnpm test
 ```
 
 ## Git 忽略策略

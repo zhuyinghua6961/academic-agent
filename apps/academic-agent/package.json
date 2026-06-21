@@ -1,0 +1,27 @@
+{
+  "name": "@academic-agent/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "academic-agent": "./bin/academic-agent.mjs"
+  },
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "start": "node ./bin/academic-agent.mjs",
+    "test": "node --import tsx --test src/setup-state.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@academic-agent/core-service": "workspace:*",
+    "@academic-agent/schemas": "workspace:*",
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/react": "^18.3.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

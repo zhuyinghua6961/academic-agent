@@ -7,8 +7,7 @@
 核心原则：
 
 ```text
-Python owns research intelligence.
-TypeScript owns user experience.
+TypeScript owns research intelligence and user experience.
 Provider/cache/artifact contracts must be auditable and reproducible.
 ```
 
@@ -34,32 +33,25 @@ Go 或 Java 只在未来出现 gateway、local daemon、企业权限、部署平
 
 ## 2. 总体架构
 
-第一版分为三层：
+第一版分为两层：
 
 ```text
-TypeScript Ink TUI
+TypeScript Ink TUI (apps/academic-agent)
         |
-        | HTTP + SSE
+        | in-process (core-service)
         v
-Python FastAPI Local Service
-        |
-        | calls
-        v
-Python Agent Core
-  - LangGraph workflow
+TypeScript Agent Core (packages/*)
+  - custom agent loop
   - Memory / context harness
   - Provider adapters
   - Artifact manager
   - Cache manager
-  - Ingestion / retrieval
-  - Trace / audit
+  - Search / tools
         |
         v
 Local Project Workspace
   - SQLite
   - files
-  - LanceDB
-  - OS keychain references
 ```
 
 ### 2.1 技术选择

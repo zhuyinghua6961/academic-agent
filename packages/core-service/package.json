@@ -1,0 +1,23 @@
+{
+  "name": "@academic-agent/core-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@academic-agent/agent-core": "workspace:*",
+    "@academic-agent/config": "workspace:*",
+    "@academic-agent/harness": "workspace:*",
+    "@academic-agent/schemas": "workspace:*",
+    "@academic-agent/setup": "workspace:*",
+    "@academic-agent/workspace": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

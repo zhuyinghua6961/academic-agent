@@ -2,30 +2,39 @@
 
 ## Project Structure & Module Organization
 
-This is a local-first academic research agent monorepo. The Python core lives in `services/core/src/academic_agent_core/` and exposes the FastAPI app, LangGraph runner, providers, search tools, schemas, and workspace logic. Python tests are in `services/core/tests/`. The Ink/React terminal UI is in `apps/tui/`, with its CLI entrypoint under `apps/tui/bin/`. Shared TypeScript schema exports live in `packages/schemas/`; files under `packages/schemas/src/generated/` are produced from Python Pydantic schemas. Design and mode notes are in `docs/`, and helper scripts are in `scripts/`. The `.academic-agent/` directory stores local config and runtime workspace data; only safe examples/config should be committed.
+This is a local-first academic research agent monorepo written in **TypeScript**. The CLI/TUI entry point is `apps/academic-agent/`. Core logic lives in `packages/`:
+
+- `agent-core` — Idea Plan runner and custom agent loop
+- `workspace` — SQLite + `.academic-agent/` persistence
+- `config` — TOML + env configuration
+- `harness` — artifacts, memory, cache, traces
+- `providers` — LLM adapters (mock, OpenAI, Anthropic, DeepSeek)
+- `search` — paper/web search and tool registry
+- `schemas` — Zod contracts (source of truth)
+- `core-service` — in-process API used by the TUI
+
+Design notes live in `docs/`. Helper scripts are in `bin/`. The `.academic-agent/` directory stores local runtime data.
 
 ## Build, Test, and Development Commands
 
-- `make install`: install Python requirements into the `academic-agent` conda env and install pnpm workspace dependencies.
-- `make dev-core`: run the FastAPI core on `127.0.0.1:8765` with reload.
-- `make dev-tui`: run the TUI in development mode.
-- `pnpm tui` or `pnpm cli`: start the CLI/TUI through the workspace entrypoints.
-- `make schema`: regenerate JSON Schema and TypeScript types from Python schemas.
-- `make test`: run schema generation, Python tests, and TypeScript typechecks.
-- `pnpm -r typecheck`: typecheck all TypeScript packages.
+- `make install` — install pnpm workspace dependencies (builds `better-sqlite3` if needed)
+- `make dev` — run the TUI in development mode
+- `pnpm tui` or `pnpm cli` — start the CLI
+- `make test` — Vitest + runtime launcher tests
+- `pnpm -r typecheck` — typecheck all TypeScript packages
 
 ## Coding Style & Naming Conventions
 
-Python targets 3.12, uses Ruff with a 100-character line length, and mypy strict mode. Keep Python modules snake_case, classes PascalCase, and tests named `test_*`. TypeScript packages use ESM, React components in PascalCase, and local variables/functions in camelCase. Treat `services/core/src/academic_agent_core/schemas.py` as the source for generated schema artifacts; regenerate rather than hand-editing generated files.
+TypeScript packages use ESM. React components in PascalCase; functions and variables in camelCase. Python-style snake_case is preserved on workspace/harness methods ported from the legacy core for behavioral parity. Zod schemas in `packages/schemas` are the contract source — do not hand-edit generated artifacts.
 
 ## Testing Guidelines
 
-Use pytest for core tests in `services/core/tests/`. Add focused tests beside existing foundation tests when changing workspace, providers, search parsing, graph behavior, or API contracts. Run `make test` before submitting changes; for TypeScript-only edits, at least run `pnpm -r typecheck`.
+Use Vitest in `tests/` and `packages/**/*.test.ts`. Run `make test` before submitting changes. Set `ACADEMIC_AGENT_ALLOW_MOCK=1` for deterministic mock provider tests.
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short imperative subjects, sometimes with conventional prefixes such as `feat:`. Prefer concise messages like `feat: add provider status check` or `Add artifact cleanup tests`. Pull requests should describe the change, list verification commands run, mention schema regeneration when applicable, link related issues/docs, and include screenshots or terminal output for visible TUI changes.
+Recent history uses short imperative subjects, sometimes with conventional prefixes such as `feat:`. Pull requests should describe the change, list verification commands run, and include terminal output for visible TUI changes.
 
 ## Security & Configuration Tips
 
-Never commit real API keys. Copy `.academic-agent/.env.example` to `.academic-agent/.env` for secrets, and keep provider/search keys in environment variables. Keep local databases, traces, caches, and generated runtime files out of commits unless they are deliberate fixtures.
+Never commit real API keys. Copy `.academic-agent/.env.example` to `~/.academic-agent/.env` for global secrets. Keep local databases, traces, caches, and runtime files out of commits unless they are deliberate fixtures. Set `ACADEMIC_AGENT_ALLOW_MOCK=1` only for development and tests.
