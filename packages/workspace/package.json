@@ -12,6 +12,7 @@
   "dependencies": {
     "@academic-agent/config": "workspace:*",
     "@academic-agent/schemas": "workspace:*",
+    "@academic-agent/workspace-port": "workspace:*",
     "better-sqlite3": "^11.9.1"
   },
   "devDependencies": {

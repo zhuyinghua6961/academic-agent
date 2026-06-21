@@ -1,0 +1,8 @@
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/SseAutoConfiguration.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/kafka/KafkaConsumerConfig.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/kafka/RunCompletedEvent.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/kafka/RunEventEnvelope.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/kafka/RunKafkaConsumers.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/redis/RedisConfig.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/redis/RunEventBroadcaster.java
+/mnt/fast18/academicAgent/services/platform-java/sse/src/main/java/com/academicagent/platform/sse/service/SseStreamService.java

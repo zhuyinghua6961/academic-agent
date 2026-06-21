@@ -9,6 +9,7 @@
     "tui": "pnpm --filter @academic-agent/app start",
     "cli": "node ./bin/academic-agent.mjs",
     "dev": "pnpm --filter @academic-agent/app dev",
+    "web:dev": "pnpm --filter @academic-agent/web dev",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run && node --test bin/academic-agent-runtime.test.mjs && pnpm --filter @academic-agent/app test",
     "test:watch": "vitest",

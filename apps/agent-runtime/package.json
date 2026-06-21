@@ -1,0 +1,26 @@
+{
+  "name": "@academic-agent/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@academic-agent/agent-core": "workspace:*",
+    "@academic-agent/schemas": "workspace:*",
+    "@academic-agent/workspace-pg": "workspace:*",
+    "@academic-agent/workspace-port": "workspace:*",
+    "kafkajs": "^2.2.4",
+    "pino": "^9.7.0",
+    "tsx": "^4.19.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

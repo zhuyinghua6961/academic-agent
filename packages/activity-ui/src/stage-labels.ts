@@ -1,0 +1,16 @@
+export const STAGE_LABELS: Record<string, string> = {
+  planning: "规划",
+  thinking: "推理",
+  deciding: "决策",
+  searching: "检索",
+  observing: "结果",
+  reading: "精读",
+  literature: "文献",
+  evidence: "证据",
+  context: "上下文",
+  answering: "回答",
+  synthesizing: "收束",
+  acting: "工具",
+  working: "进行",
+  error: "错误",
+};

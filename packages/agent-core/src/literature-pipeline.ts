@@ -16,7 +16,7 @@ import {emitActivity} from "./activity-events.js";
 import {verifyPublicationStatusLive} from "./publication-verify.js";
 import type {SubagentHarness} from "./subagent-harness.js";
 import {createHandoffPacket} from "./subagent-harness.js";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {paperKey} from "./search-budget.js";
 
@@ -63,7 +63,7 @@ export async function enrichSearchResultsPublicationStatus(
   return enriched;
 }
 
-function existingMiniReviewTitles(workspace: ProjectWorkspace, threadId: string): Set<string> {
+function existingMiniReviewTitles(workspace: WorkspacePort, threadId: string): Set<string> {
   const titles = new Set<string>();
   for (const meta of workspace.latest_artifacts_for_thread(threadId, "PaperMiniReview", 50)) {
     titles.add(meta.title.replace(/^PaperMiniReview:\s*/i, "").toLowerCase());
@@ -85,7 +85,7 @@ export async function syncClosestWorkMatrixArtifact(
 }
 
 export async function autoMiniReviewsFromSearch(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   artifactManager: ArtifactManager,
   subagentHarness: SubagentHarness,
   input: {
@@ -204,7 +204,7 @@ export async function autoMiniReviewsFromSearch(
 }
 
 export async function autoExtractInnovationHooks(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   artifactManager: ArtifactManager,
   subagentHarness: SubagentHarness,
   input: {
@@ -279,7 +279,7 @@ export async function autoExtractInnovationHooks(
 }
 
 export async function runAfterPaperSearchPipeline(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   artifactManager: ArtifactManager,
   subagentHarness: SubagentHarness,
   input: {
@@ -332,7 +332,7 @@ export async function runAfterPaperSearchPipeline(
 }
 
 export function paperTitlesNeedingReading(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string,
   rows: ClosestWorkEntry[],
   limit = 3,

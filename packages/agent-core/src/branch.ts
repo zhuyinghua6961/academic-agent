@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 export type IdeaVersionBranchRecord = {
   parent_thread_id: string;
@@ -11,14 +11,14 @@ export type IdeaVersionBranchRecord = {
   created_at: string;
 };
 
-function branchPath(workspace: ProjectWorkspace, threadId: string): string {
+function branchPath(workspace: WorkspacePort, threadId: string): string {
   const dir = path.join(workspace.workspaceDir, "thread-state");
   fs.mkdirSync(dir, {recursive: true});
   return path.join(dir, `${threadId}.branch.json`);
 }
 
 export function recordIdeaVersionBranch(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string,
   record: IdeaVersionBranchRecord,
 ): void {
@@ -26,7 +26,7 @@ export function recordIdeaVersionBranch(
 }
 
 export function readIdeaVersionBranch(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string,
 ): IdeaVersionBranchRecord | null {
   const file = branchPath(workspace, threadId);
@@ -37,7 +37,7 @@ export function readIdeaVersionBranch(
 }
 
 export function createVersionBranchThread(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   parentThreadId: string,
   previousArtifactId: string,
   impactLevel: string,

@@ -12,7 +12,7 @@ import {
   type ProviderRequest,
   type SubagentReport,
 } from "@academic-agent/schemas";
-import {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {
   buildExperimentInitialMessages,
@@ -28,7 +28,7 @@ import {registerLiveSubagentInvokers} from "./subagent-invokers.js";
 import {getExperimentTools, type ExperimentToolContext} from "./tooling.js";
 
 export class ExperimentDesignRunner {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
   readonly artifactManager: ArtifactManager;
   readonly subagentHarness: SubagentHarness;
   readonly config: AgentConfig;
@@ -36,7 +36,7 @@ export class ExperimentDesignRunner {
   readonly provider: IdeaDiagnosisProvider;
   readonly maxIterations: number;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
     this.artifactManager = new ArtifactManager(workspace);
     this.config = AgentConfig.load(workspace.projectRoot);

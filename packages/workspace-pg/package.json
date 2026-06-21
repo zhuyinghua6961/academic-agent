@@ -1,0 +1,26 @@
+{
+  "name": "@academic-agent/workspace-pg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@academic-agent/config": "workspace:*",
+    "@academic-agent/schemas": "workspace:*",
+    "@academic-agent/workspace-port": "workspace:*",
+    "deasync": "^0.1.30",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/deasync": "^0.1.5",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.15.2",
+    "typescript": "^5.8.3"
+  }
+}

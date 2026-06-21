@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://academic-agent.local/kafka/run.completed.v1.json",
+  "title": "RunCompletedEvent",
+  "type": "object",
+  "required": ["run_id", "status", "trace_id", "completed_at"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "status": { "type": "string", "enum": ["completed", "failed", "cancelled"] },
+    "artifact_id": { "type": ["string", "null"] },
+    "error": { "type": ["string", "null"] },
+    "trace_id": { "type": "string" },
+    "completed_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

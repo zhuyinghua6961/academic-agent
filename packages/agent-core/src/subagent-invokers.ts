@@ -19,7 +19,7 @@ import {
   type SubagentReport,
   type SubagentRole,
 } from "@academic-agent/schemas";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {extractToolCalls} from "./loop.js";
 import {createPaperReadingTools} from "./tooling.js";
@@ -86,7 +86,7 @@ async function invokeWithProvider(
 
 async function invokePaperReaderWithTools(
   provider: IdeaDiagnosisProvider,
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   packet: HandoffPacket,
 ): Promise<Record<string, unknown>> {
   const registry = new ToolRegistry();
@@ -139,7 +139,7 @@ async function invokePaperReaderWithTools(
 export function createLiveSubagentInvoker(
   projectRoot: string,
   role: SubagentRole,
-  workspace?: ProjectWorkspace,
+  workspace?: WorkspacePort,
 ): SubagentInvoker {
   const config = AgentConfig.load(projectRoot);
   const profileName = profileForRole(role);
@@ -172,7 +172,7 @@ export function registerLiveSubagentInvokers(
   harness: import("./subagent-harness.js").SubagentHarness,
   projectRoot: string,
   roles: SubagentRole[],
-  workspace?: ProjectWorkspace,
+  workspace?: WorkspacePort,
 ): void {
   for (const role of roles) {
     harness.register(role, createLiveSubagentInvoker(projectRoot, role, workspace));

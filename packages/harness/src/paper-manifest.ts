@@ -7,16 +7,16 @@ import {
   newId,
   type PaperManifestEntry,
 } from "@academic-agent/schemas";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
-function manifestPath(workspace: ProjectWorkspace, libraryDir?: string): string {
+function manifestPath(workspace: WorkspacePort, libraryDir?: string): string {
   const base = libraryDir ?? path.join(workspace.workspaceDir, "papers");
   fs.mkdirSync(base, {recursive: true});
   return path.join(base, "manifest.json");
 }
 
 export function readPaperManifest(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   libraryDir?: string,
 ): PaperManifestEntry[] {
   const file = manifestPath(workspace, libraryDir);
@@ -29,7 +29,7 @@ export function readPaperManifest(
 }
 
 export function writePaperManifest(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   entries: PaperManifestEntry[],
   libraryDir?: string,
 ): void {
@@ -38,7 +38,7 @@ export function writePaperManifest(
 }
 
 export function registerLocalPaper(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   localPath: string,
   options: {
     title?: string;
@@ -74,7 +74,7 @@ export function registerLocalPaper(
 }
 
 export function linkEvidenceToPaper(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   paperId: string,
   evidenceId: string,
   libraryDir?: string,
@@ -96,7 +96,7 @@ export function linkEvidenceToPaper(
 }
 
 export function findManifestEntryByPaperId(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   paperId: string,
   libraryDir?: string,
 ): PaperManifestEntry | null {
@@ -104,7 +104,7 @@ export function findManifestEntryByPaperId(
 }
 
 export function markPaperHumanRead(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   paperId: string,
   libraryDir?: string,
 ): PaperManifestEntry {
@@ -118,6 +118,6 @@ export function markPaperHumanRead(
   return entries[index];
 }
 
-export function countHumanReadPapers(workspace: ProjectWorkspace, libraryDir?: string): number {
+export function countHumanReadPapers(workspace: WorkspacePort, libraryDir?: string): number {
   return readPaperManifest(workspace, libraryDir).filter((e) => e.human_read).length;
 }

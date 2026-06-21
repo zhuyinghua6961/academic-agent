@@ -25,12 +25,12 @@ import {
   type ExperimentBlueprintBody,
   type ResearchIdeaPlanBody,
 } from "@academic-agent/schemas";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {verifyPublicationStatusLive} from "./publication-verify.js";
 
 export type PlanToolContext = {
-  workspace: ProjectWorkspace;
+  workspace: WorkspacePort;
   artifactManager: ArtifactManager;
   runId: string;
   threadId: string;
@@ -330,7 +330,7 @@ export function createPlanArtifactTools(ctx: PlanToolContext): ToolExecutor[] {
   ];
 }
 
-export function createPaperReadingTools(workspace: ProjectWorkspace): ToolExecutor[] {
+export function createPaperReadingTools(workspace: WorkspacePort): ToolExecutor[] {
   const registerLocalPaperTool: ToolExecutor = {
     definition: {
       name: "register_local_paper",
@@ -438,7 +438,7 @@ export function createExperimentBlueprintTools(ctx: ExperimentToolContext): Tool
 }
 
 export function getExperimentTools(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   expCtx: ExperimentToolContext,
 ): ToolRegistry {
   const registry = getDefaultTools();
@@ -452,7 +452,7 @@ export function getExperimentTools(
 }
 
 export function getExtendedTools(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   planCtx?: PlanToolContext,
 ): ToolRegistry {
   const registry = getDefaultTools();

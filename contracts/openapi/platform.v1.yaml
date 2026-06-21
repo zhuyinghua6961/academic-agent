@@ -1,0 +1,883 @@
+openapi: 3.1.0
+info:
+  title: Academic Agent Platform API
+  version: 1.0.0
+  description: Web SaaS gateway API (platform-java). Frontend consumes only this contract.
+
+servers:
+  - url: /api/v1
+    description: Same-origin via Nginx
+
+tags:
+  - name: auth
+  - name: users
+  - name: settings
+  - name: projects
+  - name: threads
+  - name: runs
+
+paths:
+  /health:
+    get:
+      tags: [auth]
+      summary: Liveness probe
+      operationId: healthCheck
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "409":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current user profile
+      operationId: getMe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /users/me:
+    patch:
+      tags: [users]
+      summary: Update profile
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /settings/providers:
+    get:
+      tags: [settings]
+      summary: List provider settings (masked)
+      operationId: getProviderSettings
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderSettingsResponse"
+    put:
+      tags: [settings]
+      summary: Upsert provider settings
+      operationId: putProviderSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderSettingsRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderSettingsResponse"
+
+  /settings/providers/verify:
+    post:
+      tags: [settings]
+      summary: Verify LLM provider connection
+      operationId: verifyProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyProviderRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResponse"
+
+  /settings/search:
+    get:
+      tags: [settings]
+      summary: Get search settings (masked)
+      operationId: getSearchSettings
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchSettingsResponse"
+    put:
+      tags: [settings]
+      summary: Upsert search settings
+      operationId: putSearchSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchSettingsRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchSettingsResponse"
+
+  /settings/search/verify:
+    post:
+      tags: [settings]
+      summary: Verify search provider
+      operationId: verifySearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifySearchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResponse"
+
+  /projects:
+    get:
+      tags: [projects]
+      summary: List projects
+      operationId: listProjects
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+    post:
+      tags: [projects]
+      summary: Create project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /threads:
+    get:
+      tags: [threads]
+      summary: List threads
+      operationId: listThreads
+      parameters:
+        - name: project_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThreadListResponse"
+    post:
+      tags: [threads]
+      summary: Create thread
+      operationId: createThread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateThreadRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thread"
+
+  /threads/{threadId}:
+    get:
+      tags: [threads]
+      summary: Get thread
+      operationId: getThread
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thread"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    patch:
+      tags: [threads]
+      summary: Rename thread
+      operationId: renameThread
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameThreadRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thread"
+
+  /threads/{threadId}/messages:
+    get:
+      tags: [threads]
+      summary: List messages
+      operationId: listMessages
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+    post:
+      tags: [threads]
+      summary: Add user message and start run
+      operationId: sendMessage
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "201":
+          description: Run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartRunResponse"
+
+  /runs/{runId}:
+    get:
+      tags: [runs]
+      summary: Get run status
+      operationId: getRun
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /runs/{runId}/cancel:
+    post:
+      tags: [runs]
+      summary: Cancel run
+      operationId: cancelRun
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+
+  /runs/{runId}/events:
+    get:
+      tags: [runs]
+      summary: SSE event stream
+      operationId: streamRunEvents
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /threads/{threadId}/plan:
+    get:
+      tags: [threads]
+      summary: Current idea plan for thread
+      operationId: getCurrentPlan
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /threads/{threadId}/plan/review:
+    post:
+      tags: [threads]
+      summary: Submit plan review
+      operationId: reviewPlan
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewPlanRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewPlanResponse"
+
+  /threads/{threadId}/plan/freeze:
+    post:
+      tags: [threads]
+      summary: Freeze idea plan
+      operationId: freezePlan
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FreezePlanResponse"
+
+  /threads/{threadId}/papers:
+    get:
+      tags: [threads]
+      summary: Paper manifest for thread
+      operationId: listPapers
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PapersResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  security:
+    - bearerAuth: []
+
+  parameters:
+    ThreadId:
+      name: threadId
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    ErrorResponse:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+
+    ErrorBody:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        trace_id:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        display_name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [access_token, token_type, user]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+        user:
+          $ref: "#/components/schemas/UserProfile"
+
+    UserProfile:
+      type: object
+      required: [user_id, email, display_name, created_at]
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+
+    ProviderSettingsResponse:
+      type: object
+      required: [profiles, configured]
+      properties:
+        configured:
+          type: boolean
+        profiles:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProviderProfileMasked"
+
+    ProviderProfileMasked:
+      type: object
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        configured:
+          type: boolean
+        api_key_hint:
+          type: string
+
+    ProviderSettingsRequest:
+      type: object
+      required: [profile, provider, model, api_key]
+      properties:
+        profile:
+          type: string
+          enum: [planner, reviewer, writer, extractor, embedder]
+        provider:
+          type: string
+        model:
+          type: string
+        api_key:
+          type: string
+        base_url:
+          type: string
+
+    VerifyProviderRequest:
+      type: object
+      required: [profile, provider, model, api_key]
+      properties:
+        profile:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        api_key:
+          type: string
+        base_url:
+          type: string
+
+    SearchSettingsResponse:
+      type: object
+      required: [sources, configured]
+      properties:
+        configured:
+          type: boolean
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchSourceMasked"
+
+    SearchSourceMasked:
+      type: object
+      properties:
+        source:
+          type: string
+        configured:
+          type: boolean
+        api_key_hint:
+          type: string
+
+    SearchSettingsRequest:
+      type: object
+      required: [source, api_key]
+      properties:
+        source:
+          type: string
+        api_key:
+          type: string
+
+    VerifySearchRequest:
+      type: object
+      required: [source, api_key]
+      properties:
+        source:
+          type: string
+        api_key:
+          type: string
+
+    VerifyResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+
+    Project:
+      type: object
+      required: [project_id, name, created_at]
+      properties:
+        project_id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+
+    ProjectListResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+
+    Thread:
+      type: object
+      required: [thread_id, project_id, created_at, current_mode, lifecycle_state]
+      properties:
+        thread_id:
+          type: string
+        project_id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+        current_mode:
+          type: string
+          enum: [idea_plan, experiment_design]
+        lifecycle_state:
+          type: string
+        idea_version:
+          type: integer
+        impact_level:
+          type: string
+
+    ThreadSession:
+      type: object
+      required: [thread_id, project_id, title, created_at, status]
+      properties:
+        thread_id:
+          type: string
+        project_id:
+          type: string
+        title:
+          type: string
+        created_at:
+          type: string
+        status:
+          type: string
+        last_message_preview:
+          type: string
+
+    ThreadListResponse:
+      type: object
+      required: [threads]
+      properties:
+        threads:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThreadSession"
+
+    CreateThreadRequest:
+      type: object
+      required: [project_id]
+      properties:
+        project_id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [idea_plan, experiment_design]
+
+    RenameThreadRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+
+    Message:
+      type: object
+      required: [message_id, thread_id, role, content, created_at]
+      properties:
+        message_id:
+          type: string
+        thread_id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        created_at:
+          type: string
+
+    MessageListResponse:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+
+    SendMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    Run:
+      type: object
+      required: [run_id, thread_id, status, created_at]
+      properties:
+        run_id:
+          type: string
+        thread_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+        idea:
+          type: string
+        artifact_id:
+          type: string
+        error:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    StartRunResponse:
+      type: object
+      required: [run, thread]
+      properties:
+        run:
+          $ref: "#/components/schemas/Run"
+        thread:
+          $ref: "#/components/schemas/Thread"
+
+    PlanResponse:
+      type: object
+      properties:
+        artifact_id:
+          type: string
+        status:
+          type: string
+        body:
+          type: object
+          additionalProperties: true
+
+    ReviewPlanRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [accept, revise, reject]
+        feedback:
+          type: string
+
+    ReviewPlanResponse:
+      type: object
+      required: [review_id, status]
+      properties:
+        review_id:
+          type: string
+        status:
+          type: string
+
+    FreezePlanResponse:
+      type: object
+      required: [artifact_id, frozen]
+      properties:
+        artifact_id:
+          type: string
+        frozen:
+          type: boolean
+
+    PapersResponse:
+      type: object
+      required: [papers]
+      properties:
+        papers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

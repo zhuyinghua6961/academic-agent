@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://academic-agent.local/kafka/run.execute.v1.json",
+  "title": "RunExecuteCommand",
+  "type": "object",
+  "required": ["run_id", "thread_id", "user_id", "project_id", "idea", "trace_id", "issued_at"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "thread_id": { "type": "string" },
+    "user_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "idea": { "type": "string" },
+    "mode": { "type": "string", "enum": ["idea_plan", "experiment_design"] },
+    "trace_id": { "type": "string" },
+    "issued_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

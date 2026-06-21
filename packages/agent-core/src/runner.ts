@@ -31,7 +31,7 @@ import {
   type ThreadMessage,
   utcNow,
 } from "@academic-agent/schemas";
-import {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {getExtendedTools, type PlanToolContext} from "./tooling.js";
 import {loadConvergenceForThread} from "./convergence.js";
@@ -94,7 +94,7 @@ export class RunCancelled extends Error {
 }
 
 export class IdeaPlanRunner {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
   readonly contextBuilder = new ContextBuilder();
   readonly memoryManager: MemoryManager;
   readonly cacheManager: CacheManager;
@@ -106,7 +106,7 @@ export class IdeaPlanRunner {
   readonly maxIterations: number;
   readonly subagentHarness: SubagentHarness;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
     this.memoryManager = new MemoryManager(workspace);
     this.cacheManager = new CacheManager(workspace);

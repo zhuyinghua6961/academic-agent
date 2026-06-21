@@ -19,6 +19,7 @@ import {
   type TraceRecord,
   type WorkflowThread,
 } from "@academic-agent/schemas";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 import Database from "better-sqlite3";
 
 const REQUIRED_DIRS = ["artifacts", "traces", "memory", "cache"] as const;
@@ -83,7 +84,7 @@ function bool(row: SqlRow, key: string): boolean {
   return Boolean(row[key]);
 }
 
-export class ProjectWorkspace {
+export class ProjectWorkspace implements WorkspacePort {
   readonly projectRoot: string;
   readonly workspaceDir: string;
   readonly dbPath: string;
@@ -770,6 +771,62 @@ export class ProjectWorkspace {
       conn.close();
     }
     return run;
+  }
+
+  import_run(
+    runId: string,
+    threadId: string,
+    idea: string,
+    mode: ModeRun["mode"] = "idea_plan",
+  ): ModeRun {
+    this.ensure_initialized();
+    const conn = this.connect();
+    try {
+      const existing = conn.prepare("select run_id from runs where run_id = ?").get(runId) as
+        | SqlRow
+        | undefined;
+      if (existing) {
+        const run = this.get_run(runId);
+        if (run.status === "created") {
+          return run;
+        }
+        throw new Error(`Run ${runId} already exists with status ${run.status}`);
+      }
+      const now = utcNow();
+      const run: ModeRun = {
+        run_id: runId,
+        thread_id: threadId,
+        mode,
+        status: "created",
+        input_idea: idea,
+        artifact_id: null,
+        error: null,
+        created_at: now,
+        updated_at: now,
+      };
+      conn
+        .prepare(
+          `
+          insert into runs(run_id, thread_id, mode, status, input_idea, artifact_id, error,
+                           created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          run.run_id,
+          run.thread_id,
+          run.mode,
+          run.status,
+          run.input_idea,
+          run.artifact_id,
+          run.error,
+          run.created_at,
+          run.updated_at,
+        );
+      return run;
+    } finally {
+      conn.close();
+    }
   }
 
   update_run(

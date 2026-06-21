@@ -12,7 +12,8 @@
   "dependencies": {
     "@academic-agent/config": "workspace:*",
     "@academic-agent/schemas": "workspace:*",
-    "@academic-agent/workspace": "workspace:*"
+    "@academic-agent/workspace": "workspace:*",
+    "@academic-agent/workspace-port": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

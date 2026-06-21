@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://academic-agent.local/kafka/run.events.v1.json",
+  "title": "RunEventEnvelope",
+  "type": "object",
+  "required": ["run_id", "event_id", "event_type", "ordinal", "payload", "created_at", "trace_id"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "event_id": { "type": "string" },
+    "event_type": { "type": "string" },
+    "ordinal": { "type": "integer", "minimum": 0 },
+    "payload": { "type": "object" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -30,7 +30,7 @@ import {
   type ResearchIdeaPlanBody,
   type ContextPacket,
 } from "@academic-agent/schemas";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import type {ArtifactManager} from "./harness.js";
 
@@ -716,7 +716,7 @@ function renderExperimentMetaReviewMarkdown(meta: ExperimentMetaReview): string 
   ].join("\n");
 }
 
-export function latestBlueprintArtifact(workspace: ProjectWorkspace, threadId: string): ArtifactMetadata | null {
+export function latestBlueprintArtifact(workspace: WorkspacePort, threadId: string): ArtifactMetadata | null {
   for (const type of ["ExperimentBlueprint", "ExperimentBlueprintDraft"]) {
     const artifact = workspace.latest_artifact_for_thread(threadId, type);
     if (artifact) return artifact;

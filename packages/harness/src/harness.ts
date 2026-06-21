@@ -31,7 +31,7 @@ import {
   type ThreadSessionSummary,
   type TraceRecord,
 } from "@academic-agent/schemas";
-import { ProjectWorkspace } from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import { readExtendedDraft, readExtendedPlan, defaultPlanBody } from "./extended-artifacts.js";
 
@@ -195,9 +195,9 @@ export class ContextBuilder {
 }
 
 export class MemoryManager {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
   }
 
@@ -826,9 +826,9 @@ export class MemoryManager {
 }
 
 export class CacheManager {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
   }
 
@@ -869,9 +869,9 @@ export class CacheManager {
 }
 
 export class TraceRecorder {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
   }
 
@@ -909,9 +909,9 @@ export class TraceRecorder {
 }
 
 export class ArtifactManager {
-  readonly workspace: ProjectWorkspace;
+  readonly workspace: WorkspacePort;
 
-  constructor(workspace: ProjectWorkspace) {
+  constructor(workspace: WorkspacePort) {
     this.workspace = workspace;
   }
 

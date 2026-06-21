@@ -7,7 +7,7 @@ import type {
   ReviewScores,
   WorkflowMode,
 } from "@academic-agent/schemas";
-import type {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 import {intakeComplete} from "./lifecycle.js";
 import {paperKey} from "./search-budget.js";
@@ -235,7 +235,7 @@ export function buildPlanConvergenceStatus(input: ConvergenceInput): PlanConverg
   };
 }
 
-function loadPlanBody(workspace: ProjectWorkspace, threadId: string): ResearchIdeaPlanBody {
+function loadPlanBody(workspace: WorkspacePort, threadId: string): ResearchIdeaPlanBody {
   const manager = new ArtifactManager(workspace);
   const artifact = workspace.latest_plan_artifact_for_thread(threadId);
   if (!artifact) {
@@ -253,7 +253,7 @@ function loadPlanBody(workspace: ProjectWorkspace, threadId: string): ResearchId
   }
 }
 
-function countUniquePapers(workspace: ProjectWorkspace, threadId: string): number {
+function countUniquePapers(workspace: WorkspacePort, threadId: string): number {
   const manager = new ArtifactManager(workspace);
   const artifacts = workspace.latest_artifacts_for_thread(threadId, "PaperSearchEvidence", 50);
   const keys = new Set<string>();
@@ -275,7 +275,7 @@ function countUniquePapers(workspace: ProjectWorkspace, threadId: string): numbe
 }
 
 export function loadConvergenceForThread(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string,
 ): PlanConvergenceStatus {
   const thread = workspace.get_thread(threadId);

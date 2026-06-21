@@ -8,7 +8,7 @@ import {
   type ConversationSummary,
   type ThreadMessage,
 } from "@academic-agent/schemas";
-import {ProjectWorkspace} from "@academic-agent/workspace";
+import type {WorkspacePort} from "@academic-agent/workspace-port";
 
 export type HistoryContextPacket = {
   compacted: boolean;
@@ -211,7 +211,7 @@ export function prependArtifactContext(historyPrompt: string, artifactContextTex
 }
 
 export function buildArtifactContext(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   artifactManager: ArtifactManager,
   threadId: string,
   compactionConfig: ContextCompactionConfig,
@@ -736,7 +736,7 @@ export function buildHistoryContext(
 }
 
 export function buildContextUsage(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string | null = null,
   draftInput = "",
 ): ContextUsageResponse {
@@ -806,7 +806,7 @@ export function buildContextUsage(
 }
 
 export function buildThreadArtifactContext(
-  workspace: ProjectWorkspace,
+  workspace: WorkspacePort,
   threadId: string,
   draftInput = "",
 ): ArtifactContextPacket {

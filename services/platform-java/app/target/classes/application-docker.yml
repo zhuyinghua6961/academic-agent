@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
+platform:
+  jwt:
+    secret: ${JWT_SECRET}
+  credentials-encryption-key: ${CREDENTIALS_ENCRYPTION_KEY}
+  internal-token: ${PLATFORM_INTERNAL_TOKEN}
